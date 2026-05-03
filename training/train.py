@@ -184,34 +184,25 @@ class NanoPitchDataset(Dataset):
 
 
 def augment_mel_batch(mel_clean, mel_noise, snr_range, device):
-    """Training-time augmentation: mix clean and noise log-mel.
+    """Mix clean and noise log-mel at a per-row random SNR.
+
+    Each batch row draws an independent SNR (dB) from ``snr_range``. The noise
+    log-mel is shifted by ``-snr_db * ln(10) / 20`` so combining via
+    ``logaddexp`` corresponds to additive mixing in the linear-power domain at
+    the requested SNR. ``logaddexp`` is numerically stable for small/negative
+    log-energies (avoids underflow that ``log(exp(a) + exp(b))`` would hit).
 
     Parameters
     ----------
     mel_clean, mel_noise : Tensor, shape (B, T, N_MELS), on ``device``
     snr_range : (float, float) — min and max SNR in dB (see ``--snr-range``)
     device : torch.device
-
-    Returns
-    -------
-    Tensor (B, T, N_MELS) — mel passed to the model.
-
-    Student exercise
-    ----------------
-    Implement random SNR mixing. For each batch row, draw ``snr_db`` uniformly
-    from ``snr_range``, convert to a log-domain gain, and combine clean and
-    noise with ``torch.logaddexp`` for numerical stability, e.g.::
-
-        B = mel_clean.size(0)
-        snr_db = (torch.rand(B, 1, 1, device=device)
-                  * (snr_range[1] - snr_range[0]) + snr_range[0])
-        gain_offset = -snr_db * (np.log(10.0) / 20.0)
-        return torch.logaddexp(mel_clean, mel_noise + gain_offset)
-
-    This stub returns ``mel_clean`` unchanged so the trainer runs without
-    augmentation until you add the above (or your own variant).
     """
-    return mel_clean
+    B = mel_clean.size(0)
+    snr_db = (torch.rand(B, 1, 1, device=device)
+              * (snr_range[1] - snr_range[0]) + snr_range[0])
+    gain_offset = -snr_db * (np.log(10.0) / 20.0)
+    return torch.logaddexp(mel_clean, mel_noise + gain_offset)
 
 
 # ═══════════════════════════════════════════════════════════════════════
