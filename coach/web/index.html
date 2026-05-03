@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NanoPitch Coach</title>
+  <style>
+    body { font-family: -apple-system, system-ui, sans-serif; max-width: 920px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    h1 { margin: 0 0 0.25rem; }
+    .sub { color: #666; margin-bottom: 1.5rem; }
+    section { margin-bottom: 1.5rem; padding: 1rem; border: 1px solid #ddd; border-radius: 8px; }
+    section h2 { margin-top: 0; font-size: 1rem; text-transform: uppercase; letter-spacing: 0.05em; color: #444; }
+    button { font: inherit; padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid #888; background: #fafafa; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    select { font: inherit; padding: 0.4rem; }
+    canvas { display: block; width: 100%; height: 240px; background: #111; border-radius: 4px; }
+    #report { white-space: pre; font-family: ui-monospace, monospace; font-size: 0.85rem; }
+    .row { display: flex; gap: 1rem; align-items: center; }
+  </style>
+</head>
+<body>
+  <h1>NanoPitch Coach</h1>
+  <p class="sub">Pick a song, sing along to the metronome, get a per-note quality report.</p>
+
+  <!-- ─── Song selection ─── -->
+  <section>
+    <h2>1. Choose a song</h2>
+    <div class="row">
+      <select id="song-select">
+        <option value="songs/scale.song.json">C Major Scale</option>
+        <option value="songs/twinkle.song.json">Twinkle Twinkle Little Star</option>
+      </select>
+      <span id="song-info"></span>
+    </div>
+  </section>
+
+  <!-- ─── Recording controls ─── -->
+  <section>
+    <h2>2. Record</h2>
+    <div class="row">
+      <button id="record-btn" disabled>Record (loading model…)</button>
+      <span id="status">idle</span>
+    </div>
+  </section>
+
+  <!-- ─── Live piano-roll ─── -->
+  <section>
+    <h2>3. Live view</h2>
+    <canvas id="roll"></canvas>
+  </section>
+
+  <!-- ─── Post-take report ─── -->
+  <section>
+    <h2>4. Report</h2>
+    <div id="report">No take yet — record to see your score.</div>
+  </section>
+
+  <!-- pitch engine: existing WASM build from project 1 -->
+  <script src="../../deployment/web/nanopitch.js"></script>
+  <!-- coach app: scoring + recording lifecycle -->
+  <script src="analyzer.js"></script>
+  <script src="coach.js"></script>
+</body>
+</html>

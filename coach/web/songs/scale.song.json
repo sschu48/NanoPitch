@@ -1,0 +1,16 @@
+{
+  "title": "C Major Scale (ascending)",
+  "bpm": 80,
+  "time_signature": [4, 4],
+  "key": "C major",
+  "notes": [
+    { "midi": 60, "start_beat": 0, "duration_beats": 1 },
+    { "midi": 62, "start_beat": 1, "duration_beats": 1 },
+    { "midi": 64, "start_beat": 2, "duration_beats": 1 },
+    { "midi": 65, "start_beat": 3, "duration_beats": 1 },
+    { "midi": 67, "start_beat": 4, "duration_beats": 1 },
+    { "midi": 69, "start_beat": 5, "duration_beats": 1 },
+    { "midi": 71, "start_beat": 6, "duration_beats": 1 },
+    { "midi": 72, "start_beat": 7, "duration_beats": 1 }
+  ]
+}
