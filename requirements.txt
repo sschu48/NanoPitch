@@ -1,0 +1,5 @@
+torch>=2.4
+numpy>=1.26,<3
+tqdm>=4.66
+tensorboard>=2.16
+huggingface_hub>=0.24

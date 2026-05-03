@@ -6,3 +6,21 @@ __pycache__/
 
 # macOS / editor noise
 .DS_Store
+
+# venv + tooling
+.venv/
+.python-version
+uv.lock
+
+# training outputs — heavy artifacts ignored, small evidence files tracked
+*.pth
+*.ckpt
+training/runs/**/checkpoints/
+training/runs/**/tb/
+training/runs/**/model.json
+
+# stray browser-test export
+deployment/web/model.json
+
+# log files
+logs/
