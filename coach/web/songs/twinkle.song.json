@@ -1,0 +1,22 @@
+{
+  "title": "Twinkle Twinkle Little Star",
+  "bpm": 100,
+  "time_signature": [4, 4],
+  "key": "C major",
+  "notes": [
+    { "midi": 60, "start_beat":  0, "duration_beats": 1 },
+    { "midi": 60, "start_beat":  1, "duration_beats": 1 },
+    { "midi": 67, "start_beat":  2, "duration_beats": 1 },
+    { "midi": 67, "start_beat":  3, "duration_beats": 1 },
+    { "midi": 69, "start_beat":  4, "duration_beats": 1 },
+    { "midi": 69, "start_beat":  5, "duration_beats": 1 },
+    { "midi": 67, "start_beat":  6, "duration_beats": 2 },
+    { "midi": 65, "start_beat":  8, "duration_beats": 1 },
+    { "midi": 65, "start_beat":  9, "duration_beats": 1 },
+    { "midi": 64, "start_beat": 10, "duration_beats": 1 },
+    { "midi": 64, "start_beat": 11, "duration_beats": 1 },
+    { "midi": 62, "start_beat": 12, "duration_beats": 1 },
+    { "midi": 62, "start_beat": 13, "duration_beats": 1 },
+    { "midi": 60, "start_beat": 14, "duration_beats": 2 }
+  ]
+}
