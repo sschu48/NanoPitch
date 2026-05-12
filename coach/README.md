@@ -3,7 +3,14 @@
 Browser-based singing coach built on top of the NanoPitch model. Pick a
 song, sing along to the metronome, get a per-note quality report.
 
-See [COACH.md](COACH.md) for design, scope, and scoring math.
+The coach is designed around four independent axes (pitch, tempo,
+technique, dynamics), each detector-first: pitch and tempo are *graded*
+against the score; technique and dynamics are *detected and reported*
+without judging quality. Reports become coaching messages later (v5)
+when reference recordings supply per-note targets.
+
+See [COACH.md](COACH.md) for the four-axis framing, phased roadmap,
+and scoring math.
 
 ## Run locally
 
