@@ -15,28 +15,31 @@ evaluation strategy. They are deliberately *not* symmetric: only one of
 them is a clean NanoPitch-style supervised learning problem, two are
 DSP, and one is "already done" (pitch).
 
-| Axis | Reference | Method | Output |
+| Axis | Reference | Method | Grade tier (v1–v4) |
 |---|---|---|---|
-| **Pitch** | MIDI note → target Hz | NanoPitch f0 vs. target, in cents | **Graded** |
-| **Tempo** | Score onset time = `start_beat × 60/bpm` | Onset detection vs. target onsets | **Graded** |
-| **Technique** | (none in v1–v4) | Classifier trained on GTSinger labels | **Detected** |
-| **Dynamics** | (none in v1–v4) | A-weighted RMS curve | **Detected** |
+| **Pitch** | Score (MIDI → target Hz) | NanoPitch f0 vs. target, in cents | Score-match |
+| **Tempo** | Score (`start_beat × 60/bpm`) | Onset detection vs. target onsets | Score-match |
+| **Dynamics** | Physiology (used any range?) | A-weighted RMS curve | Range-used |
+| **Technique** | Physiology (healthy vibrato?) | Classifier trained on GTSinger | Healthiness |
 
-- **Graded** — the score declares the right answer. We score the user against it.
-- **Detected** — we report what happened. We do not claim it should or shouldn't have happened.
+Pitch and tempo are score-matched because their references are
+derivable from any MIDI. Dynamics and technique fall back to
+physiological rules (healthy vibrato rate, dynamic range used) until a
+reference recording exists (v5) or annotations are authored.
 
-This split is the most important design choice in the project. We
-deliberately avoid grading subjective qualities (was the vibrato good?
-was the dynamic appropriate?) because we lack both labeled training
+We deliberately avoid grading subjective qualities (was the expression
+appropriate, was the phrasing musical) because we lack both labeled
 data and the musical expertise to author per-song targets by hand.
-Reporting without judgment still gives users actionable feedback —
-they decide whether each detected event matched their intent.
 
 ## Detector-first, coach later
 
-A pure detector becomes a coach once each song has *per-note targets*
-("this note should have vibrato", "this phrase should be forte"). We
-don't author those targets by hand. Instead:
+Every axis has a *physiology* or *score-derived* grade available
+without authoring any per-song annotations (see "Grading per axis"
+below). That gets us a working coach as soon as the detectors exist.
+
+To upgrade from "graded by physiology" to "graded against this specific
+song's musical intent," each song needs per-note targets. We don't
+author those targets by hand. Instead:
 
 1. Build the four detectors (v1 → v4).
 2. Record a reference take of each preset song (us, a guest singer, or
@@ -44,22 +47,59 @@ don't author those targets by hand. Instead:
 3. Run the detectors on the reference take. The detector's output *is*
    the per-note target.
 4. Future user takes are scored against that auto-generated target,
-   promoting reports into coaching messages ("target vibrato was 6Hz,
-   yours was 4Hz — a little faster").
+   promoting Grade A into Grade C — concrete coaching messages
+   ("target vibrato was 6Hz, yours was 4Hz — a little faster").
 
 This sidesteps the annotation problem entirely — the musical expertise
 lives in the reference singer, not in us or an LLM.
 
+## Grading per axis
+
+Each axis has up to three grade tiers. The system uses the strongest
+tier available for the song being sung, and every axis always has at
+least one available — no axis is left ungraded.
+
+| Tier | Baseline | Needs |
+|---|---|---|
+| **A** | Physiology / take-internal | Nothing (always available) |
+| **B** | Score-declared expectation | Hand-annotated targets in song JSON |
+| **C** | Reference recording | Pro take of the same song, run through detectors |
+
+Concrete measurement per axis:
+
+| Axis | Grade A (physiology / always) | Grade B (score-annotated) | Grade C (reference take) |
+|---|---|---|---|
+| Pitch | — | cents off vs. MIDI target *(always available — MIDI is the score)* | — |
+| Tempo | — | onset error vs. `start_beat × 60/bpm` *(always available)* | — |
+| Dynamics | RMS range used (0dB → 0, 20dB → 100) | per-note loudness matches marked `f`/`p`/etc. | Pearson r of user vs. reference RMS curve |
+| Technique | vibrato rate/depth/regularity in healthy range; falsetto pitch stability | detected technique matches `expect.technique` per note | detected technique matches reference's detected technique per note |
+
+Pitch and tempo collapse to a single grade because MIDI inherently
+provides their reference. Dynamics and technique have a useful Grade A
+that works for any song without extra investment, and earn richer
+grades when a song is annotated (B) or has a reference recording (C).
+
+Each grade is a 0–100 score from a per-axis scaling curve (linear with
+a tolerance knee — e.g. 0¢ → 100, 50¢ → 50, 200¢ → 0). The overall
+score is a weighted mean across axes, with weights stored in the song
+JSON so they can vary per song.
+
 ## Phased roadmap
 
-| Phase | Scope | Status |
-|---|---|---|
-| **v1** | Pitch — graded against score. Metronome, piano-roll, post-record report. | In progress |
-| v2 | Tempo — onset detection (DSP first; small model only if needed). Graded against score. | Planned |
-| v3 | Dynamics — A-weighted RMS curve. Reported, not graded. | Planned |
-| v4 | Technique — classifier trained on GTSinger (vibrato, falsetto, mixed voice, breathy, pharyngeal, glissando). Reported, not graded. | Planned |
-| v5 | Reference-derived targets — record a pro take per song; run detectors; promote reports to coaching messages. | Future |
-| v6 | Upload your own MIDI; key transposition; free-pace recording with DTW. | Future |
+| Phase | Scope | Estimate | Status |
+|---|---|---|---|
+| **v1** | Pitch — score-match grading. Metronome, piano-roll, post-record report. | ~1 week | In progress |
+| v2 | Tempo — DSP onset detection vs. score onsets. | ~few days | Planned |
+| v3 | Dynamics — RMS curve + range-used grade. | ~1–2 days | Planned |
+| v4 | Technique — classifier trained on GTSinger; healthiness grade from physiology. | **2–4 weeks** (ML risk) | Planned |
+| v5 | Reference-derived targets — record a pro take per song; run detectors; promote to reference-match grading. | ~few days once detectors work | Future |
+| v6 | Upload your own MIDI; key transposition; free-pace recording with DTW. | Future | Future |
+
+**Realistic scope for ~3 weeks: v1 + v2 + v3.** That delivers a coach
+that grades pitch and tempo and shows dynamics — a complete-feeling
+report without the ML training risk. v4 is the only true model-training
+milestone and can easily eat 2–4 weeks on its own; treat it as a
+separate sprint rather than part of the initial push.
 
 ## v1 scope (this branch)
 
@@ -154,43 +194,42 @@ heading. None are implemented yet.
 
 ### Dynamics (v3)
 - No model. A-weighted RMS over a short window (~25 ms), smoothed.
-- **Output**: loudness curve overlaid on the piano-roll, plus per-note
-  mean loudness relative to the take's overall mean (so the curve is
-  expressive shape, not absolute SPL — mic gain washes out absolute).
-- **Reported only.** Coaching ("more here, less here") waits for v5,
-  when a reference recording supplies a target loudness curve.
+- **Grade A (v3 default)**: range-used score. `range_db = p95(rms) - p5(rms)`;
+  map 0 dB → 0, 20 dB → 100. Catches the common amateur problem of
+  singing everything at one volume without needing annotations.
+- **Display**: loudness curve overlaid on the piano-roll, normalized to
+  the take's mean (so mic gain washes out and only expressive shape
+  shows).
+- **Grade B / C** (later): per-note loudness vs. marked dynamic, or
+  curve correlation against a reference take.
 
 ### Technique (v4)
 - **Training data**: [GTSinger](https://github.com/AaronZ345/GTSinger) —
   phoneme-level annotations for six techniques (mixed voice, falsetto,
   breathy, pharyngeal, vibrato, glissando) with controlled comparison
-  groups (natural vs. technique-densely-employed). 80h, 20 singers,
-  9 languages.
+  groups. 80h, 20 singers, 9 languages.
 - **Model shape**: NanoPitch-style frame-level encoder + multi-label
   classification head. Train, export to ONNX, load alongside
   `nanopitch.wasm` in the browser.
-- **Output**: per-note technique labels with confidence.
-- **Reported only.** GTSinger has no "good/bad" labels — every singer
-  is a pro. We can detect *what* technique is happening; we cannot
-  judge quality from this data alone.
+- **Grade A (v4 default)**: healthiness from physiology. For each
+  detected vibrato event: rate (FFT of f0) scored on a bell curve
+  centered at 6 Hz; depth scored on a bell curve centered at 60¢;
+  regularity from cycle-period variance. For each falsetto event:
+  pitch stability from f0 stddev. Aggregate = mean across detected
+  events. If no techniques detected, no grade (don't penalize users
+  for not attempting techniques).
+- **Grade B / C** (later): detected technique vs. annotated expectation
+  or vs. reference take's detected techniques per note.
 
-### Aggregation and weighting
+### Overall score
 
-Once multiple axes exist, the report needs an overall score. Two
-constraints before averaging anything:
+Each axis is normalized to 0–100 by its scaling curve. The overall
+score is a weighted mean across the axes graded for the current phase,
+with weights stored in the song JSON (`grading.weights`). Default to
+equal weights; tune per song from testing.
 
-1. **Normalize each axis to a 0–100 scale** through a per-axis curve
-   (e.g. 0¢ → 100, 50¢ → 50, 200¢ → 0). Cents-off, ms-off, and
-   technique-correctness are not directly comparable.
-2. **Weights are song-dependent** — put them in the song JSON, not in
-   global code. A hymn weights pitch + timing heavily; an opera aria
-   weights technique. Default to equal weights; tune per song after
-   testing.
-
-**Detected** axes (technique, dynamics) do not enter the aggregate
-score in v1–v4. Only **graded** axes count toward the overall number.
-This keeps the headline score meaningful and avoids penalizing users
-for stylistic choices the score did not specify.
+A hymn might weight pitch + tempo heavily; an aria might weight
+technique. Per-song weights let the same engine grade different repertoire fairly.
 
 ## Repo layout
 
