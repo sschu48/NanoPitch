@@ -4,8 +4,9 @@ A browser-based singing coach. Pick a pre-loaded song, sing along to a
 metronome, and get a per-axis report after the take.
 
 Pitch detection comes from the NanoPitch model trained in project 1
-(`training/runs/v1_aug/`). Future axes (tempo, technique, dynamics)
-add their own detectors alongside it.
+(`training/runs/v1_aug/`). The current Project 2 snapshot adds live tempo
+and loudness prototypes alongside it. Technique remains a separate prototype
+on Brady's branch, and dynamics grading is still future work.
 
 ## The four axes
 
@@ -19,7 +20,7 @@ DSP, and one is "already done" (pitch).
 |---|---|---|---|
 | **Pitch** | Score (MIDI → target Hz) | NanoPitch f0 vs. target, in cents | Score-match |
 | **Tempo** | Score (`start_beat × 60/bpm`) | Onset detection vs. target onsets | Score-match |
-| **Dynamics** | Physiology (used any range?) | A-weighted RMS curve | Range-used |
+| **Dynamics** | Physiology (used any range?) | Planned from RMS/loudness curve | Not implemented yet |
 | **Technique** | Physiology (healthy vibrato?) | Classifier trained on GTSinger | Healthiness |
 
 Pitch and tempo are score-matched because their references are
@@ -89,9 +90,9 @@ JSON so they can vary per song.
 | Phase | Scope | Estimate | Status |
 |---|---|---|---|
 | **v1** | Pitch — score-match grading. Metronome, piano-roll, post-record report. | ~1 week | In progress |
-| v2 | Tempo — DSP onset detection vs. score onsets. | ~few days | Planned |
-| v3 | Dynamics — RMS curve + range-used grade. | ~1–2 days | Planned |
-| v4 | Technique — classifier trained on GTSinger; healthiness grade from physiology. | **2–4 weeks** (ML risk) | Planned |
+| v2 | Tempo — DSP onset detection vs. score onsets. | ~few days | Live detector prototype |
+| v3 | Dynamics — RMS curve + range-used grade. | ~1–2 days | Loudness signal live; grading not implemented |
+| v4 | Technique — classifier trained on GTSinger; healthiness grade from physiology. | **2–4 weeks** (ML risk) | Separate Brady prototype |
 | v5 | Reference-derived targets — record a pro take per song; run detectors; promote to reference-match grading. | ~few days once detectors work | Future |
 | v6 | Upload your own MIDI; key transposition; free-pace recording with DTW. | Future | Future |
 
@@ -112,10 +113,11 @@ separate sprint rather than part of the initial push.
   detected cents, in-tune %), plus an aggregate score.
 - All in the browser. No backend.
 
-Out of scope for v1 (deferred to later phases per the roadmap above):
-- Tempo / onset grading
-- Vibrato, falsetto, technique detection
-- Dynamics
+Out of scope for the coach v1 integration (deferred to later phases per
+the roadmap above):
+- Tempo / onset grading against the song score
+- Vibrato, falsetto, and technique integration
+- Dynamics grading
 - User-uploaded MIDI, free-tempo / DTW alignment
 
 ## Tech stack
@@ -180,8 +182,9 @@ in-tune score.
 
 ## Future axes — implementation notes
 
-These are sketches to keep v1 honest about where the project is
-heading. None are implemented yet.
+These are sketches to keep v1 honest about where the project is heading.
+The live browser detector has tempo and loudness prototypes, but the coach
+UI has not consumed them yet.
 
 ### Tempo (v2)
 - **Reference** per note: `t_ref = start_beat × 60 / bpm` (seconds

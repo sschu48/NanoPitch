@@ -2,6 +2,21 @@
 
 Train a neural network that tracks pitch and detects singing in real-time on your laptop, then deploy it to run live in a web browser.
 
+## Project 2 Snapshot
+
+For the Project 2 v1 submission snapshot, start here:
+[PROJECT2_SUBMISSION.md](PROJECT2_SUBMISSION.md).
+
+This branch presents the current project as two intentionally separate pieces:
+
+- Live browser detector work for NanoPitch pitch/VAD, tempo/onsets, and
+  loudness.
+- Brady's GT Singer technique model prototype, which remains on
+  `origin/brady_dev` and is referenced read-only from the submission doc.
+
+Dynamics grading is not implemented yet. The live loudness signal is the
+measurement we would build a dynamics axis from later.
+
 ## What You'll Learn
 
 - **How neural networks process audio** — converting sound to mel spectrograms, feeding them through recurrent layers (GRUs), and interpreting the output
