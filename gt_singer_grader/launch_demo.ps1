@@ -7,11 +7,33 @@ param(
 )
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$python = Join-Path (Split-Path -Parent $repoRoot) ".venvs\nanopitch\Scripts\python.exe"
+function Resolve-PythonCommand {
+    $candidates = @(
+        (Join-Path $repoRoot ".venv\Scripts\python.exe"),
+        (Join-Path (Split-Path -Parent $repoRoot) ".venvs\nanopitch\Scripts\python.exe"),
+        (Join-Path (Split-Path -Parent $repoRoot) ".venv\Scripts\python.exe")
+    )
 
-if (-not (Test-Path $python)) {
-    throw "Python executable not found at $python"
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) {
+            return $candidate
+        }
+    }
+
+    $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
+    if ($pythonCommand) {
+        return "python"
+    }
+
+    $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
+    if ($pyLauncher) {
+        return "py"
+    }
+
+    throw "No Python runtime was found. Activate a venv or install Python, then rerun the launcher."
 }
+
+$python = Resolve-PythonCommand
 
 $args = @(
     "-m", "gt_singer_grader.demo",
@@ -30,7 +52,12 @@ if (-not $NoBrowser) {
 
 Push-Location $repoRoot
 try {
-    & $python @args
+    if ($python -eq "py") {
+        & $python -3 @args
+    }
+    else {
+        & $python @args
+    }
 }
 finally {
     Pop-Location

@@ -81,6 +81,18 @@ If `--target-family` is set, the script also emits:
 
 ## Browser Demo
 
+The packaged browser demo does not require the GT Singer dataset. It only needs:
+
+- the `gt_singer_grader` code
+- the packaged checkpoint at `gt_singer_grader/models/technique_demo_best.pth`
+- Python with `numpy` and `torch`
+
+For a fresh environment:
+
+```bash
+pip install -r gt_singer_grader/requirements-demo.txt
+```
+
 ```bash
 cd NanoPitch
 python -m gt_singer_grader.demo \
@@ -102,6 +114,14 @@ or double-click:
 ```text
 gt_singer_grader\launch_demo.bat
 ```
+
+The PowerShell launcher now tries, in order:
+
+- `NanoPitch/.venv/Scripts/python.exe`
+- `../.venvs/nanopitch/Scripts/python.exe`
+- `../.venv/Scripts/python.exe`
+- `python`
+- `py -3`
 
 The demo accepts a `.wav` upload, optionally lets you choose the intended
 technique, and returns:
