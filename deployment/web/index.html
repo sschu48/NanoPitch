@@ -103,6 +103,9 @@
   canvas { width: 100%; height: 100%; display: block; image-rendering: pixelated; }
   #mel-canvas { height: 120px; }
   #pitch-canvas { height: 120px; }
+  #tempo-canvas { height: 130px; }
+  #loudness-canvas { height: 110px; }
+  #clarity-canvas { height: 110px; }
   #waveform-canvas { height: 60px; }
   .meters {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -119,6 +122,9 @@
   .meter.vad .value { color: var(--green); }
   .meter.pitch .value { color: var(--accent); }
   .meter.note .value { color: var(--accent2); }
+  .meter.tempo .value { color: #ffaa33; }
+  .meter.loudness .value { color: #ffd24c; }
+  .meter.clarity .value { color: #4cda7c; }
   #rtf-canvas { height: 50px; }
   #rtf-meter .value { color: var(--green); }
   #rtf-meter.warn .value { color: #ffaa33; }
@@ -185,11 +191,29 @@
     </div>
   </div>
 
+  <div class="panel">
+    <h2>Tempo &amp; Onsets</h2>
+    <canvas id="tempo-canvas"></canvas>
+  </div>
+
+  <div class="viz-row">
+    <div class="panel">
+      <h2>Loudness</h2>
+      <canvas id="loudness-canvas"></canvas>
+    </div>
+
+    <div class="panel">
+      <h2>Clarity</h2>
+      <canvas id="clarity-canvas"></canvas>
+    </div>
+  </div>
+
   <!-- Numeric meters showing instantaneous readings.
        - Voice Activity: probability (0-100%) that speech/singing is present
        - Pitch (Hz): the fundamental frequency estimate
        - Note: the nearest MIDI note name + cents deviation (e.g. A4 +12c)
-       - Level (dB): RMS power of the current frame in decibels -->
+       - Level (dB): RMS power of the current frame in decibels
+       - Clarity: voiced pitch definition and short-term stability -->
   <div class="panel">
     <div class="meters">
       <div class="meter vad">
@@ -204,9 +228,21 @@
         <div class="value" id="note-value">—</div>
         <div class="label">Note</div>
       </div>
-      <div class="meter">
+      <div class="meter tempo">
+        <div class="value" id="bpm-value">—</div>
+        <div class="label">BPM</div>
+      </div>
+      <div class="meter tempo">
+        <div class="value" id="onset-value">0</div>
+        <div class="label">Onsets</div>
+      </div>
+      <div class="meter loudness">
         <div class="value" id="rms-value">—</div>
         <div class="label">Level (dB)</div>
+      </div>
+      <div class="meter clarity">
+        <div class="value" id="clarity-value">—</div>
+        <div class="label">Clarity</div>
       </div>
       <div class="meter" id="rtf-meter">
         <div class="value" id="rtf-value">—</div>
@@ -357,11 +393,44 @@ let isRunning = false;
 //                  when voice is detected.
 // ─────────────────────────────────────────────────────────────────────────────
 const HISTORY = 300; // frames to show
+const FRAME_HOP_S = 0.01; // 160 samples at 16 kHz
 let melHistory = [];     // each: Float32Array(40)
 let rtfHistory = [];     // rolling RTF values for sparkline
 let pitchHistory = [];   // each: Float32Array(360)
 let waveHistory = [];    // raw audio chunks
 let vadHistory = [];
+let noveltyHistory = [];  // tempo/onset energy per frame
+let onsetHistory = [];    // onset markers aligned to noveltyHistory
+let loudnessHistory = []; // smoothed RMS dB per frame
+let clarityHistory = [];  // 0-100 clarity score per voiced frame
+
+const NOVELTY_WIN = 400;
+const BPM_MIN = 50;
+const BPM_MAX = 200;
+const LAG_MIN = Math.round(60 / BPM_MAX / FRAME_HOP_S);
+const LAG_MAX = Math.round(60 / BPM_MIN / FRAME_HOP_S);
+const BPM_PRIOR_CENTER = 100;
+const BPM_PRIOR_SIGMA = 45;
+const BPM_UPDATE_EVERY_FRAMES = 10;
+const ONSET_REFRACTORY_FRAMES = 12;
+
+const LOUDNESS_SILENCE_DB = -60;
+const LOUDNESS_RECENT = 500; // 5s at 10ms/frame
+const CLARITY_MIN_DB = -60;
+let prevTempoMel = null;
+let prevTempoF0Cents = null;
+let prevTempoVad = 0;
+let prevTempoRmsDb = null;
+let noveltyBuf = [];
+let acCurve = null;
+let currentBpm = null;
+let bpmUpdateCounter = 0;
+let totalOnsets = 0;
+let framesSinceOnset = ONSET_REFRACTORY_FRAMES;
+let loudnessRecent = [];
+let smoothedLoudnessDb = null;
+let smoothedClarityScore = null;
+let prevClarityF0Cents = null;
 
 
 // ── Canvas Setup Helper ─────────────────────────────────────────────────────
@@ -383,6 +452,24 @@ function setupCanvas(id, w, h) {
   canvas.width = w;
   canvas.height = h;
   return { canvas, ctx: canvas.getContext('2d') };
+}
+
+function clamp01(x) {
+  return Math.max(0, Math.min(1, x));
+}
+
+function percentile(values, p) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.max(0, Math.min(sorted.length - 1, Math.floor(p * (sorted.length - 1))));
+  return sorted[idx];
+}
+
+function currentLoudnessRangeDb() {
+  if (loudnessRecent.length < 30) return null;
+  const p5 = percentile(loudnessRecent, 0.05);
+  const p95 = percentile(loudnessRecent, 0.95);
+  return p95 - p5;
 }
 
 
@@ -529,6 +616,423 @@ function drawWaveform(waveHist, vadHist) {
 }
 
 
+// ── Tempo + Onset Visualization ────────────────────────────────────────────
+//
+// This is a free-tempo detector: it finds rhythmic events in the live audio
+// and estimates their repeating pulse. Song-aware scoring later compares
+// these onset times against expected note starts from a song JSON file.
+function drawTempo(noveltyHist, onsetHist, ac) {
+  const W = HISTORY * 2;
+  const H = 130;
+  const { canvas, ctx } = setupCanvas('tempo-canvas', W, H);
+
+  ctx.fillStyle = '#0f0f14';
+  ctx.fillRect(0, 0, W, H);
+
+  const TOP_H = Math.floor(H * 0.58);
+  const BOT_Y = TOP_H + 7;
+  const BOT_H = H - BOT_Y - 14;
+
+  let maxNovelty = 1;
+  for (const v of noveltyHist) {
+    if (v != null && v > maxNovelty) maxNovelty = v;
+  }
+  const yNovelty = v => TOP_H - (Math.min(v, maxNovelty) / maxNovelty) * (TOP_H - 8) - 4;
+
+  ctx.strokeStyle = '#ffaa33';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  let first = true;
+  for (let t = 0; t < noveltyHist.length; t++) {
+    const v = noveltyHist[t];
+    if (v == null) { first = true; continue; }
+    const x = (t / HISTORY) * W;
+    const y = yNovelty(v);
+    if (first) { ctx.moveTo(x, y); first = false; }
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  ctx.strokeStyle = '#ff6c8c';
+  ctx.lineWidth = 1;
+  for (let t = 0; t < onsetHist.length; t++) {
+    if (!onsetHist[t]) continue;
+    const x = (t / HISTORY) * W;
+    ctx.beginPath();
+    ctx.moveTo(x, 4);
+    ctx.lineTo(x, TOP_H - 3);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = '#2a2a3a';
+  ctx.beginPath();
+  ctx.moveTo(0, TOP_H);
+  ctx.lineTo(W, TOP_H);
+  ctx.stroke();
+
+  if (!ac) {
+    ctx.fillStyle = '#888899';
+    ctx.font = '10px monospace';
+    ctx.fillText('waiting for rhythmic audio', 4, BOT_Y + 14);
+    return;
+  }
+
+  const N_BARS = 90;
+  const bars = new Float32Array(N_BARS);
+  let maxBar = 0;
+  for (let i = 0; i < N_BARS; i++) {
+    const bpm = BPM_MIN + (i / (N_BARS - 1)) * (BPM_MAX - BPM_MIN);
+    const lag = 60 / (bpm * FRAME_HOP_S);
+    const idx = lag - LAG_MIN;
+    const i0 = Math.max(0, Math.min(ac.length - 1, Math.floor(idx)));
+    const i1 = Math.max(0, Math.min(ac.length - 1, i0 + 1));
+    const frac = idx - i0;
+    bars[i] = ac[i0] * (1 - frac) + ac[i1] * frac;
+    if (bars[i] > maxBar) maxBar = bars[i];
+  }
+
+  const norm = maxBar > 0 ? 1 / maxBar : 0;
+  const barW = W / N_BARS;
+  for (let i = 0; i < N_BARS; i++) {
+    const h = Math.max(0, bars[i] * norm) * BOT_H;
+    ctx.fillStyle = '#6c8cff';
+    ctx.fillRect(i * barW, BOT_Y + BOT_H - h, barW - 1, h);
+  }
+
+  ctx.fillStyle = '#888899';
+  ctx.font = '10px monospace';
+  for (const labelBpm of [50, 75, 100, 125, 150, 175, 200]) {
+    const x = ((labelBpm - BPM_MIN) / (BPM_MAX - BPM_MIN)) * W;
+    ctx.fillText(String(labelBpm), x - 7, H - 2);
+  }
+
+  if (currentBpm != null) {
+    const x = ((currentBpm - BPM_MIN) / (BPM_MAX - BPM_MIN)) * W;
+    ctx.strokeStyle = '#ff6c8c';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, BOT_Y);
+    ctx.lineTo(x, BOT_Y + BOT_H);
+    ctx.stroke();
+    ctx.fillStyle = '#ff6c8c';
+    ctx.fillText(`${currentBpm.toFixed(1)} BPM`, Math.min(x + 4, W - 76), BOT_Y + 12);
+  }
+}
+
+
+// ── Loudness Visualization ─────────────────────────────────────────────────
+//
+// Loudness is the smoothed RMS level from the same 10ms frame that feeds
+// NanoPitch. The graph shows absolute digital level in dBFS, while the
+// green guide lines mark the recent voiced p5/p95 range.
+function drawLoudness(loudnessHist) {
+  const W = HISTORY * 2;
+  const H = 110;
+  const { canvas, ctx } = setupCanvas('loudness-canvas', W, H);
+
+  ctx.fillStyle = '#0f0f14';
+  ctx.fillRect(0, 0, W, H);
+
+  const DB_MIN = -60;
+  const DB_MAX = 0;
+  const yFor = db => {
+    const v = Math.max(DB_MIN, Math.min(DB_MAX, db));
+    return H - ((v - DB_MIN) / (DB_MAX - DB_MIN)) * (H - 8) - 4;
+  };
+
+  if (loudnessRecent.length >= 30) {
+    const p5 = percentile(loudnessRecent, 0.05);
+    const p95 = percentile(loudnessRecent, 0.95);
+    ctx.strokeStyle = '#4cda7c';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    for (const db of [p5, p95]) {
+      const y = yFor(db);
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(W, y);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
+
+  ctx.strokeStyle = '#ffd24c';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  let first = true;
+  for (let t = 0; t < loudnessHist.length; t++) {
+    const db = loudnessHist[t];
+    if (db == null || db < -90) { first = true; continue; }
+    const x = (t / HISTORY) * W;
+    const y = yFor(db);
+    if (first) { ctx.moveTo(x, y); first = false; }
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  const range = currentLoudnessRangeDb();
+  ctx.fillStyle = '#888899';
+  ctx.font = '10px monospace';
+  ctx.fillText(range == null ? 'range -- dB' : `range ${range.toFixed(1)} dB`, 4, 12);
+}
+
+
+// ── Clarity Visualization ──────────────────────────────────────────────────
+//
+// Clarity is an interpretable, frame-level score. It combines NanoPitch's
+// pitch-posterior focus, VAD confidence, level, and short-term f0 stability.
+// This is not a trained style model; it is a live signal-quality detector.
+function drawClarity(clarityHist) {
+  const W = HISTORY * 2;
+  const H = 110;
+  const { canvas, ctx } = setupCanvas('clarity-canvas', W, H);
+
+  ctx.fillStyle = '#0f0f14';
+  ctx.fillRect(0, 0, W, H);
+
+  const yFor = score => H - clamp01(score / 100) * (H - 8) - 4;
+
+  for (const score of [25, 50, 75]) {
+    const y = yFor(score);
+    ctx.strokeStyle = score === 50 ? '#333344' : '#252535';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = '#4cda7c';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  let first = true;
+  for (let t = 0; t < clarityHist.length; t++) {
+    const score = clarityHist[t];
+    if (score == null) { first = true; continue; }
+    const x = (t / HISTORY) * W;
+    const y = yFor(score);
+    if (first) { ctx.moveTo(x, y); first = false; }
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  ctx.fillStyle = '#888899';
+  ctx.font = '10px monospace';
+  ctx.fillText('0', 4, H - 5);
+  ctx.fillText('100', 4, 12);
+}
+
+
+function noveltyThreshold() {
+  const recent = noveltyBuf.slice(-120);
+  if (recent.length < 20) return 2.5;
+
+  let mean = 0;
+  for (const v of recent) mean += v;
+  mean /= recent.length;
+
+  let variance = 0;
+  for (const v of recent) {
+    const d = v - mean;
+    variance += d * d;
+  }
+  const std = Math.sqrt(variance / recent.length);
+  return Math.max(1.2, mean + 1.6 * std);
+}
+
+function computeTempoNovelty(output) {
+  let flux = 0;
+  if (prevTempoMel) {
+    for (let b = 0; b < output.mel.length; b++) {
+      const d = output.mel[b] - prevTempoMel[b];
+      if (d > 0) flux += d;
+    }
+    prevTempoMel.set(output.mel);
+  } else {
+    prevTempoMel = new Float32Array(output.mel);
+  }
+
+  let pitchJump = 0;
+  if (output.f0 > 0) {
+    const cents = 1200 * Math.log2(output.f0 / 440);
+    if (prevTempoF0Cents != null) {
+      pitchJump = Math.min(Math.abs(cents - prevTempoF0Cents), 1200);
+    }
+    prevTempoF0Cents = cents;
+  } else {
+    prevTempoF0Cents = null;
+  }
+
+  const vadRise = Math.max(0, output.vad - prevTempoVad);
+  prevTempoVad = output.vad;
+
+  let levelRise = 0;
+  if (prevTempoRmsDb != null) {
+    levelRise = Math.max(0, output.rmsDb - prevTempoRmsDb);
+  }
+  prevTempoRmsDb = output.rmsDb;
+
+  let novelty =
+    0.80 * flux +
+    0.025 * pitchJump +
+    2.50 * vadRise +
+    0.12 * levelRise;
+
+  if (output.vad < 0.15 && output.rmsDb < -55) novelty *= 0.2;
+  return Math.max(0, novelty);
+}
+
+function estimateBpm() {
+  if (noveltyBuf.length < 180) return;
+
+  const N = noveltyBuf.length;
+  let mean = 0;
+  for (let i = 0; i < N; i++) mean += noveltyBuf[i];
+  mean /= N;
+
+  const ac = new Float32Array(LAG_MAX - LAG_MIN + 1);
+  for (let lag = LAG_MIN; lag <= LAG_MAX; lag++) {
+    if (lag >= N - 1) continue;
+    let sum = 0;
+    let energyA = 0;
+    let energyB = 0;
+    for (let i = 0; i < N - lag; i++) {
+      const a = noveltyBuf[i] - mean;
+      const b = noveltyBuf[i + lag] - mean;
+      sum += a * b;
+      energyA += a * a;
+      energyB += b * b;
+    }
+    ac[lag - LAG_MIN] = sum / (Math.sqrt(energyA * energyB) + 1e-6);
+  }
+
+  let peakIdx = 0;
+  let peakVal = -Infinity;
+  for (let i = 0; i < ac.length; i++) {
+    const lag = LAG_MIN + i;
+    const bpm = 60 / (lag * FRAME_HOP_S);
+    const d = bpm - BPM_PRIOR_CENTER;
+    const prior = Math.exp(-(d * d) / (2 * BPM_PRIOR_SIGMA * BPM_PRIOR_SIGMA));
+    ac[i] *= prior;
+    if (ac[i] > peakVal) {
+      peakVal = ac[i];
+      peakIdx = i;
+    }
+  }
+
+  acCurve = ac;
+  if (peakVal > 0.08) {
+    const peakLag = LAG_MIN + peakIdx;
+    currentBpm = 60 / (peakLag * FRAME_HOP_S);
+  }
+}
+
+function updateTempoDetector(output) {
+  const novelty = computeTempoNovelty(output);
+  const threshold = noveltyThreshold();
+  const isOnset =
+    novelty > threshold &&
+    framesSinceOnset >= ONSET_REFRACTORY_FRAMES &&
+    (output.vad > 0.15 || output.rmsDb > -50);
+
+  if (isOnset) {
+    framesSinceOnset = 0;
+    totalOnsets++;
+  } else {
+    framesSinceOnset++;
+  }
+
+  noveltyBuf.push(novelty);
+  if (noveltyBuf.length > NOVELTY_WIN) noveltyBuf.shift();
+  bpmUpdateCounter++;
+  if (bpmUpdateCounter >= BPM_UPDATE_EVERY_FRAMES) {
+    bpmUpdateCounter = 0;
+    estimateBpm();
+  }
+  if (framesSinceOnset > 250) currentBpm = null;
+
+  output.novelty = novelty;
+  output.onset = isOnset;
+  output.bpm = currentBpm;
+  output.onsetCount = totalOnsets;
+}
+
+function updateLoudnessDetector(rmsDb, vad) {
+  if (smoothedLoudnessDb == null) {
+    smoothedLoudnessDb = rmsDb;
+  } else {
+    smoothedLoudnessDb = 0.25 * rmsDb + 0.75 * smoothedLoudnessDb;
+  }
+
+  if (vad > 0.3 && rmsDb > LOUDNESS_SILENCE_DB) {
+    loudnessRecent.push(smoothedLoudnessDb);
+    if (loudnessRecent.length > LOUDNESS_RECENT) loudnessRecent.shift();
+  }
+
+  return smoothedLoudnessDb;
+}
+
+function computeClarityScore(output) {
+  if (!output || output.vad < 0.2 || !(output.f0 > 0) || output.rmsDb < CLARITY_MIN_DB) {
+    prevClarityF0Cents = null;
+    smoothedClarityScore = null;
+    return null;
+  }
+
+  let top1 = 0;
+  let top2 = 0;
+  let sum = 0;
+  for (let i = 0; i < output.pitch.length; i++) {
+    const p = output.pitch[i];
+    sum += p;
+    if (p > top1) {
+      top2 = top1;
+      top1 = p;
+    } else if (p > top2) {
+      top2 = p;
+    }
+  }
+
+  const mean = sum / output.pitch.length;
+  const confidenceScore = clamp01((top1 - 0.05) / 0.35);
+  const focusScore = clamp01(((top1 / (mean + 1e-6)) - 1) / 18);
+  const marginScore = clamp01((top1 - top2) / (top1 + 1e-6) / 0.6);
+  const posteriorScore = 0.55 * confidenceScore + 0.30 * focusScore + 0.15 * marginScore;
+
+  const cents = 1200 * Math.log2(output.f0 / 440);
+  let stabilityScore = 0.75;
+  if (prevClarityF0Cents != null) {
+    const frameJump = Math.abs(cents - prevClarityF0Cents);
+    stabilityScore = 1 - clamp01((frameJump - 20) / 120);
+  }
+  prevClarityF0Cents = cents;
+
+  const voicingScore = clamp01((output.vad - 0.25) / 0.55);
+  const levelScore = clamp01((output.rmsDb + 55) / 30);
+  const rawScore = 100 * (
+    0.50 * posteriorScore +
+    0.25 * stabilityScore +
+    0.15 * voicingScore +
+    0.10 * levelScore
+  );
+
+  if (smoothedClarityScore == null) {
+    smoothedClarityScore = rawScore;
+  } else {
+    smoothedClarityScore = 0.35 * rawScore + 0.65 * smoothedClarityScore;
+  }
+  return smoothedClarityScore;
+}
+
+function updateFrameDetectors(output) {
+  updateTempoDetector(output);
+  output.loudnessDb = updateLoudnessDetector(output.rmsDb, output.vad);
+  output.loudnessRangeDb = currentLoudnessRangeDb();
+  output.clarityScore = computeClarityScore(output);
+  return output;
+}
+
+
 // ── Meter Display Update ────────────────────────────────────────────────────
 //
 // Updates the four numeric readout panels:
@@ -559,8 +1063,13 @@ function updateMeters(output) {
   document.getElementById('pitch-value').textContent =
     output.f0 > 0 ? output.f0.toFixed(1) : '—';
   document.getElementById('note-value').textContent = hzToNote(output.f0);
+  document.getElementById('bpm-value').textContent =
+    currentBpm != null ? currentBpm.toFixed(1) : '—';
+  document.getElementById('onset-value').textContent = String(totalOnsets);
   document.getElementById('rms-value').textContent =
     output.rmsDb > -80 ? output.rmsDb.toFixed(0) : '—';
+  document.getElementById('clarity-value').textContent =
+    output.clarityScore != null ? output.clarityScore.toFixed(0) : '—';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -876,13 +1385,25 @@ async function startMic() {
       while (rtfHistory.length > HISTORY) rtfHistory.shift();
 
       if (result) {
+        updateFrameDetectors(result);
         melHistory.push(result.mel);
         pitchHistory.push(result.pitch);
         vadHistory.push(result.vad);
+        noveltyHistory.push(result.novelty);
+        onsetHistory.push(result.onset);
+        loudnessHistory.push(result.loudnessDb);
+        clarityHistory.push(result.clarityScore);
       } else {
         melHistory.push(null);
         pitchHistory.push(null);
         vadHistory.push(0);
+        noveltyHistory.push(null);
+        onsetHistory.push(false);
+        loudnessHistory.push(null);
+        clarityHistory.push(null);
+        prevTempoF0Cents = null;
+        prevClarityF0Cents = null;
+        smoothedClarityScore = null;
       }
       waveHistory.push(new Float32Array(samples));
 
@@ -890,12 +1411,19 @@ async function startMic() {
       while (pitchHistory.length > HISTORY) pitchHistory.shift();
       while (waveHistory.length > HISTORY) waveHistory.shift();
       while (vadHistory.length > HISTORY) vadHistory.shift();
+      while (noveltyHistory.length > HISTORY) noveltyHistory.shift();
+      while (onsetHistory.length > HISTORY) onsetHistory.shift();
+      while (loudnessHistory.length > HISTORY) loudnessHistory.shift();
+      while (clarityHistory.length > HISTORY) clarityHistory.shift();
 
       frameCounter++;
       if (frameCounter % 3 === 0) {
         drawMel(melHistory);
         drawPitch(pitchHistory);
         drawWaveform(waveHistory, vadHistory);
+        drawTempo(noveltyHistory, onsetHistory, acCurve);
+        drawLoudness(loudnessHistory);
+        drawClarity(clarityHistory);
         drawRtf(rtfHistory);
         if (result) updateMeters(result);
         updateRtfMeter(rtfHistory);
@@ -1149,6 +1677,16 @@ async function init() {
       wasmModule._nanopitch_reset_state(statePtr, loadedGruSize);
     }
     melHistory = []; pitchHistory = []; waveHistory = []; vadHistory = [];
+    noveltyHistory = []; onsetHistory = []; noveltyBuf = [];
+    acCurve = null; currentBpm = null; totalOnsets = 0;
+    bpmUpdateCounter = 0; framesSinceOnset = ONSET_REFRACTORY_FRAMES;
+    prevTempoMel = null; prevTempoF0Cents = null;
+    prevTempoVad = 0; prevTempoRmsDb = null;
+    loudnessHistory = []; clarityHistory = []; loudnessRecent = [];
+    smoothedLoudnessDb = null; smoothedClarityScore = null;
+    prevClarityF0Cents = null;
+    document.getElementById('bpm-value').textContent = '—';
+    document.getElementById('onset-value').textContent = '0';
   });
 
   // Check if the WASM glue script has defined the factory function.
