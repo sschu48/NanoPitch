@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Project 1 NanoPitch Summary - Brady Chase</title>
+  <style>
+    @page { size: letter; margin: 0.45in; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0 auto;
+      max-width: 8in;
+      color: #111827;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 10.6px;
+      line-height: 1.32;
+      background: #fff;
+    }
+    h1 {
+      margin: 0 0 5px;
+      font-size: 19px;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 8px 0 3px;
+      font-size: 12px;
+      color: #0f766e;
+    }
+    p { margin: 0 0 4px; }
+    ul { margin: 0 0 3px 16px; padding: 0; }
+    li { margin: 1px 0; }
+    a { color: #0f766e; text-decoration: none; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 4px;
+      font-size: 10.2px;
+    }
+    th, td {
+      border-bottom: 1px solid #d6dee8;
+      padding: 3px 4px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #ecfdf5;
+      color: #111827;
+      font-weight: 700;
+    }
+    .meta {
+      color: #475569;
+      font-size: 10.2px;
+      margin-bottom: 5px;
+    }
+    .columns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      column-gap: 16px;
+      align-items: start;
+    }
+    .shots {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 9px;
+      margin-top: 6px;
+    }
+    .shots img {
+      width: 100%;
+      border: 1px solid #d6dee8;
+      border-radius: 6px;
+      display: block;
+    }
+    .caption {
+      color: #475569;
+      font-size: 9.4px;
+      margin-top: 2px;
+    }
+    .tight { margin-top: 5px; }
+    @media print {
+      body { max-width: none; }
+      a { color: #111827; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Project 1 NanoPitch Summary - Brady Chase</h1>
+  <p class="meta">
+    Top model: <strong>vdr_focus_gru96_ft80</strong>, checkpoint epoch 127, loss 0.02686,
+    GRU size 96, condition size 64, learning rate 1e-4. Submitted to the class leaderboard as
+    <strong>submissions/brady_chase/weights.pth</strong>.
+  </p>
+
+  <div class="columns">
+    <section>
+      <h2>Overview / Strategy</h2>
+      <ul>
+        <li>Goal: improve NanoPitch's real-time singing pitch tracker under noisy test conditions while keeping the model deployable in the browser.</li>
+        <li>Strategy: train on realistic noisy log-mel mixtures, tighten voiced-frame learning, and fine-tune the same small GRU-96 architecture instead of making the model too large for realtime use.</li>
+      </ul>
+
+      <h2>Modifications</h2>
+      <ul>
+        <li>Implemented random-SNR log-mel noise augmentation with <code>torch.logaddexp</code>.</li>
+        <li>Added f0/VAD/union voicing target options, boundary weighting, positive/focal VAD weighting, and voiced balanced sampling.</li>
+        <li>Added cosine scheduling support, gradient-norm logging, improved evaluator options, and exported the best weights for web/leaderboard use.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Rationale</h2>
+      <ul>
+        <li>Noise mixing matched the leaderboard SNRs better than clean-only training.</li>
+        <li>F0-aware voicing and boundary weights focused learning on the frames that most affect VDR/RPA near onsets, offsets, and noisy voiced regions.</li>
+        <li>Longer low-LR fine-tuning improved pitch accuracy without increasing inference cost.</li>
+      </ul>
+
+      <h2>Impact on Performance</h2>
+      <ul>
+        <li>Realtime macro RPA improved from 90.2% baseline to 94.0%.</li>
+        <li>Noisy -5 dB RPA improved from 88.0% to 93.5%; clean RPA improved from 94.8% to 97.3%.</li>
+        <li>Macro gross error dropped from 9.8% to 6.0%. Tradeoff: official VAD accuracy dropped from 87.1% to 81.1% because the run emphasized pitch/voicing accuracy.</li>
+      </ul>
+    </section>
+  </div>
+
+  <h2 class="tight">Baseline vs. Best Model</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Model</th>
+        <th>Realtime Macro RPA</th>
+        <th>Clean RPA</th>
+        <th>-5 dB RPA</th>
+        <th>Macro Gross Err</th>
+        <th>Macro VAD Acc</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Class default baseline</td>
+        <td>90.2%</td>
+        <td>94.8%</td>
+        <td>88.0%</td>
+        <td>9.8%</td>
+        <td>87.1%</td>
+      </tr>
+      <tr>
+        <td>Brady best run</td>
+        <td><strong>94.0%</strong></td>
+        <td><strong>97.3%</strong></td>
+        <td><strong>93.5%</strong></td>
+        <td><strong>6.0%</strong></td>
+        <td>81.1%</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 class="tight">Repo Link</h2>
+  <p>
+    GitHub repo: <a href="https://github.com/Festus-Ewakaa-Kahunla/NanoPitch/tree/Brady_dev">https://github.com/Festus-Ewakaa-Kahunla/NanoPitch/tree/Brady_dev</a>.
+    Leaderboard submission branch: <a href="https://github.com/illusion3333/NanoPitch/tree/brady-chase-best-run">https://github.com/illusion3333/NanoPitch/tree/brady-chase-best-run</a>.
+  </p>
+
+  <h2 class="tight">Screenshots</h2>
+  <div class="shots">
+    <div>
+      <img src="screenshots/baseline_performance.png" alt="Baseline performance screenshot">
+      <p class="caption">Baseline performance from the class default baseline result JSON.</p>
+    </div>
+    <div>
+      <img src="screenshots/top_result.png" alt="Top-performing result screenshot">
+      <p class="caption">Top-performing submitted model evaluated with realtime Viterbi.</p>
+    </div>
+  </div>
+</body>
+</html>
