@@ -40,15 +40,20 @@ $python = Resolve-PythonCommand
 Push-Location $repoRoot
 try {
     if ($Download) {
-        $downloadArgs = @("-m", "gt_singer_grader.download_vocalset", "--output-dir", $VocalSetRoot)
-        if ($Extract) {
-            $downloadArgs += "--extract"
+        New-Item -ItemType Directory -Force -Path $VocalSetRoot | Out-Null
+        $zipPath = Join-Path $VocalSetRoot "VocalSet1-2.zip"
+        & curl.exe -L -C - -o $zipPath "https://zenodo.org/records/1442513/files/VocalSet1-2.zip?download=1"
+        if ($LASTEXITCODE -ne 0) {
+            throw "VocalSet download failed with exit code $LASTEXITCODE"
         }
-        if ($python -eq "py") {
-            & $python -3 @downloadArgs
-        }
-        else {
-            & $python @downloadArgs
+    }
+
+    if ($Extract) {
+        $zipPath = Join-Path $VocalSetRoot "VocalSet1-2.zip"
+        $extractMarker = Join-Path $VocalSetRoot ".extracted-vocalset-1-2"
+        if (-not (Test-Path $extractMarker)) {
+            Expand-Archive -LiteralPath $zipPath -DestinationPath $VocalSetRoot -Force
+            New-Item -ItemType File -Path $extractMarker -Force | Out-Null
         }
     }
 
