@@ -4,5 +4,6 @@ runs/
 *.pt
 *.pth
 *.jsonl
+*.log
 !models/
 !models/technique_demo_best.pth

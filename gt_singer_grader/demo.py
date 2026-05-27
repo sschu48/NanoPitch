@@ -30,6 +30,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--max-upload-mb", type=int, default=25)
+    parser.add_argument("--nanopitch-vad-checkpoint", default=None)
+    parser.add_argument("--disable-nanopitch-vad", action="store_true")
     parser.add_argument("--open-browser", action="store_true", help="Open the local demo in your browser")
     return parser.parse_args()
 
@@ -172,6 +174,10 @@ def _render_page(
         metric_chips.append(f'<span class="chip">Clip acc: {float(clip_acc) * 100.0:.1f}%</span>')
     if tech_f1 is not None:
         metric_chips.append(f'<span class="chip">Technique F1: {float(tech_f1) * 100.0:.1f}%</span>')
+    if val_metrics.get("_nanopitch_vad_active"):
+        metric_chips.append('<span class="chip">VAD: NanoPitch</span>')
+    else:
+        metric_chips.append('<span class="chip">VAD: Technique model</span>')
 
     return f"""<!doctype html>
 <html lang="en">
@@ -495,7 +501,7 @@ def _render_page(
       <div>
         <h2>Run A Clip</h2>
         <p class="hint">
-          Record in the browser or choose an existing WAV file. Leave the target blank for pure technique detection. Choose a target technique if you want the demo
+          Record in the browser or choose an existing WAV file. NanoPitch VAD gates voiced frames before the technique model summarizes the take. Leave the target blank for pure technique detection. Choose a target technique if you want the demo
           to decide whether that technique was executed well or still needs work.
         </p>
       </div>
@@ -806,7 +812,13 @@ class DemoHandler(BaseHTTPRequestHandler):
 def main() -> None:
     args = parse_args()
     checkpoint_path = args.checkpoint or resolve_default_checkpoint()
-    predictor = load_predictor(checkpoint_path, device_name=args.device)
+    predictor = load_predictor(
+        checkpoint_path,
+        device_name=args.device,
+        nanopitch_vad_checkpoint=args.nanopitch_vad_checkpoint,
+        use_nanopitch_vad=not args.disable_nanopitch_vad,
+    )
+    predictor.val_metrics["_nanopitch_vad_active"] = predictor.nanopitch_vad_model is not None
     state = DemoState(
         predictor=predictor,
         max_upload_bytes=max(1, args.max_upload_mb) * 1024 * 1024,
@@ -816,6 +828,10 @@ def main() -> None:
     url = f"http://{args.host}:{args.port}"
     print(f"Serving GT Singer demo at {url}")
     print(f"Loaded checkpoint: {checkpoint_path}")
+    if predictor.nanopitch_vad_model is not None:
+        print(f"Using NanoPitch VAD: {predictor.nanopitch_vad_path}")
+    else:
+        print("Using technique model VAD")
     if args.open_browser:
         webbrowser.open(url)
     try:
