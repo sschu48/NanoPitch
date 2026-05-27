@@ -307,6 +307,46 @@ def _render_page(
       transform: translateY(-1px);
       box-shadow: 0 16px 28px rgba(181, 71, 55, 0.34);
     }}
+    button:disabled {{
+      cursor: not-allowed;
+      opacity: 0.52;
+      transform: none;
+      box-shadow: none;
+    }}
+    .secondary-button {{
+      background: #335f71;
+      box-shadow: 0 12px 24px rgba(51, 95, 113, 0.22);
+    }}
+    .danger-button {{
+      background: #a33f3f;
+      box-shadow: 0 12px 24px rgba(163, 63, 63, 0.22);
+    }}
+    .record-panel {{
+      display: grid;
+      gap: 16px;
+      padding: 20px;
+      background: rgba(255,255,255,0.55);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+    }}
+    .record-controls {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }}
+    .record-status {{
+      color: var(--muted);
+      font-size: 0.95rem;
+    }}
+    .record-status.recording {{
+      color: var(--bad);
+      font-weight: 700;
+    }}
+    audio {{
+      width: 100%;
+      max-width: 520px;
+    }}
     .error-panel {{
       margin-top: 18px;
       padding: 16px 18px;
@@ -441,7 +481,7 @@ def _render_page(
     <section class="hero">
       <h1>Technique Coach Demo</h1>
       <p>
-        Upload a <code>.wav</code> singing clip, pick the intended technique if you want a pass/fail style verdict,
+        Record a live take or upload a <code>.wav</code> singing clip, pick the intended technique if you want a pass/fail style verdict,
         and the model will estimate what technique is present and whether it came through well enough.
       </p>
       <div class="meta">
@@ -455,14 +495,26 @@ def _render_page(
       <div>
         <h2>Run A Clip</h2>
         <p class="hint">
-          Leave the target blank for pure technique detection. Choose a target technique if you want the demo
+          Record in the browser or choose an existing WAV file. Leave the target blank for pure technique detection. Choose a target technique if you want the demo
           to decide whether that technique was executed well or still needs work.
         </p>
+      </div>
+      <div class="record-panel">
+        <div>
+          <h3>Record Live Singing</h3>
+          <p class="hint">Start recording, sing a short phrase, then stop and analyze the captured take.</p>
+        </div>
+        <div class="record-controls">
+          <button type="button" class="secondary-button" id="start-recording">Start Recording</button>
+          <button type="button" class="danger-button" id="stop-recording" disabled>Stop Recording</button>
+          <span class="record-status" id="record-status">Microphone idle</span>
+        </div>
+        <audio id="recording-preview" controls hidden></audio>
       </div>
       <form method="post" enctype="multipart/form-data" class="form-grid">
         <label>
           Upload WAV
-          <input type="file" name="audio" accept=".wav,audio/wav" required>
+          <input type="file" name="audio" id="audio-input" accept=".wav,audio/wav" required>
         </label>
         <label>
           Intended Technique
@@ -478,6 +530,137 @@ def _render_page(
     {error_block}
     {results_html}
   </main>
+  <script>
+    const startButton = document.getElementById('start-recording');
+    const stopButton = document.getElementById('stop-recording');
+    const statusText = document.getElementById('record-status');
+    const audioInput = document.getElementById('audio-input');
+    const preview = document.getElementById('recording-preview');
+
+    let audioContext = null;
+    let mediaStream = null;
+    let sourceNode = null;
+    let processorNode = null;
+    let recordedChunks = [];
+    let recordedSampleRate = 44100;
+
+    function setRecordingStatus(text, isRecording) {{
+      statusText.textContent = text;
+      statusText.classList.toggle('recording', Boolean(isRecording));
+    }}
+
+    function flattenChunks(chunks) {{
+      const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+      const samples = new Float32Array(totalLength);
+      let offset = 0;
+      for (const chunk of chunks) {{
+        samples.set(chunk, offset);
+        offset += chunk.length;
+      }}
+      return samples;
+    }}
+
+    function writeString(view, offset, text) {{
+      for (let i = 0; i < text.length; i += 1) {{
+        view.setUint8(offset + i, text.charCodeAt(i));
+      }}
+    }}
+
+    function encodeWav(samples, sampleRate) {{
+      const bytesPerSample = 2;
+      const buffer = new ArrayBuffer(44 + samples.length * bytesPerSample);
+      const view = new DataView(buffer);
+      writeString(view, 0, 'RIFF');
+      view.setUint32(4, 36 + samples.length * bytesPerSample, true);
+      writeString(view, 8, 'WAVE');
+      writeString(view, 12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * bytesPerSample, true);
+      view.setUint16(32, bytesPerSample, true);
+      view.setUint16(34, 8 * bytesPerSample, true);
+      writeString(view, 36, 'data');
+      view.setUint32(40, samples.length * bytesPerSample, true);
+
+      let offset = 44;
+      for (let i = 0; i < samples.length; i += 1) {{
+        const sample = Math.max(-1, Math.min(1, samples[i]));
+        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+        offset += bytesPerSample;
+      }}
+      return new Blob([view], {{ type: 'audio/wav' }});
+    }}
+
+    function attachRecordedFile(blob) {{
+      const file = new File([blob], 'live-technique-take.wav', {{ type: 'audio/wav' }});
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      audioInput.files = transfer.files;
+      preview.src = URL.createObjectURL(blob);
+      preview.hidden = false;
+    }}
+
+    async function startRecording() {{
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {{
+        setRecordingStatus('This browser does not expose microphone recording.', false);
+        return;
+      }}
+
+      mediaStream = await navigator.mediaDevices.getUserMedia({{ audio: true }});
+      audioContext = new AudioContext();
+      recordedSampleRate = audioContext.sampleRate;
+      recordedChunks = [];
+      sourceNode = audioContext.createMediaStreamSource(mediaStream);
+      processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+      processorNode.onaudioprocess = (event) => {{
+        recordedChunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+      }};
+      sourceNode.connect(processorNode);
+      processorNode.connect(audioContext.destination);
+      startButton.disabled = true;
+      stopButton.disabled = false;
+      setRecordingStatus('Recording...', true);
+    }}
+
+    async function stopRecording() {{
+      stopButton.disabled = true;
+      if (processorNode) {{
+        processorNode.disconnect();
+        processorNode.onaudioprocess = null;
+      }}
+      if (sourceNode) {{
+        sourceNode.disconnect();
+      }}
+      if (mediaStream) {{
+        mediaStream.getTracks().forEach((track) => track.stop());
+      }}
+      if (audioContext) {{
+        await audioContext.close();
+      }}
+      const samples = flattenChunks(recordedChunks);
+      if (samples.length === 0) {{
+        setRecordingStatus('No audio was captured. Try recording again.', false);
+      }} else {{
+        const blob = encodeWav(samples, recordedSampleRate);
+        attachRecordedFile(blob);
+        setRecordingStatus('Live take ready. Click Analyze Clip.', false);
+      }}
+      startButton.disabled = false;
+    }}
+
+    startButton.addEventListener('click', () => {{
+      startRecording().catch((error) => {{
+        setRecordingStatus(`Microphone error: ${{error.message}}`, false);
+        startButton.disabled = false;
+        stopButton.disabled = true;
+      }});
+    }});
+    stopButton.addEventListener('click', () => {{
+      stopRecording().catch((error) => setRecordingStatus(`Recording error: ${{error.message}}`, false));
+    }});
+  </script>
 </body>
 </html>
 """
