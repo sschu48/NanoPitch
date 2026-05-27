@@ -62,6 +62,38 @@ Useful outputs:
 - `checkpoints/best.pth`
 - TensorBoard logs in `tb/`
 
+## VocalSet Quality Training
+
+VocalSet adds professional singer examples across many techniques. The current
+quality trainer keeps GT Singer as the technique recognizer, then trains a
+separate execution-quality calibrator from VocalSet audio-derived features.
+Because VocalSet does not include explicit good/bad execution ratings, this is
+weak supervision: matching VocalSet technique examples are treated as positive
+professional examples, and mismatched target techniques provide contrast.
+
+Download and extract VocalSet 1.2, then train:
+
+```powershell
+.\gt_singer_grader\start_vocalset_quality_training.ps1 -Download -Extract -Epochs 10
+```
+
+If VocalSet is already present:
+
+```bash
+python -m gt_singer_grader.vocalset_quality \
+  --vocalset-root ./gt_singer_grader/data/VocalSet \
+  --output-dir ./gt_singer_grader/runs/vocalset_quality \
+  --epochs 10 \
+  --batch-size 64
+```
+
+Outputs:
+
+- `vocalset_manifest.json`
+- `features.csv`
+- `epoch_*.pth`
+- `best.pth`
+
 ## Inference
 
 ```bash
