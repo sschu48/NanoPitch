@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
+import os
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 import torch
 
@@ -12,6 +17,12 @@ from .features import load_wav_mono, log_mel_spectrogram
 from .feedback import summarize_prediction, summary_to_json
 from .model import TechniqueGraderModel
 
+TRAINING_DIR = Path(__file__).resolve().parents[1] / "training"
+if str(TRAINING_DIR) not in sys.path:
+    sys.path.insert(0, str(TRAINING_DIR))
+
+from model import NanoPitch  # noqa: E402
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Infer singing-technique grades from one audio file")
@@ -19,6 +30,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--audio", required=True)
     parser.add_argument("--target-family", choices=FAMILY_NAMES, default=None)
     parser.add_argument("--device", default="auto")
+    parser.add_argument("--nanopitch-vad-checkpoint", default=None)
+    parser.add_argument("--disable-nanopitch-vad", action="store_true")
     parser.add_argument("--output-json", default=None)
     return parser.parse_args()
 
@@ -42,9 +55,41 @@ class LoadedPredictor:
     max_seconds: float
     checkpoint_epoch: int | None
     val_metrics: dict[str, float]
+    nanopitch_vad_path: str | None = None
+    nanopitch_vad_model: NanoPitch | None = None
 
 
-def load_predictor(checkpoint_path: str, device_name: str = "auto") -> LoadedPredictor:
+def resolve_default_nanopitch_vad_checkpoint() -> str | None:
+    root = Path(__file__).resolve().parents[1]
+    candidates = [
+        root / "submission" / "weights.pth",
+        root / "training" / "runs" / "vdr_focus_gru96_ft80" / "checkpoints" / "epoch_156.pth",
+        root / "training" / "runs" / "vad_onset_labels_gru96_ft" / "checkpoints" / "best.pth",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def load_nanopitch_vad_model(checkpoint_path: str, device: torch.device) -> NanoPitch:
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    model_kwargs = checkpoint.get("model_kwargs", {"cond_size": 64, "gru_size": 96})
+    with contextlib.redirect_stdout(io.StringIO()):
+        model = NanoPitch(**model_kwargs)
+    model.load_state_dict(checkpoint["state_dict"])
+    model.to(device)
+    model.eval()
+    return model
+
+
+def load_predictor(
+    checkpoint_path: str,
+    device_name: str = "auto",
+    *,
+    nanopitch_vad_checkpoint: str | None = None,
+    use_nanopitch_vad: bool = True,
+) -> LoadedPredictor:
     device = choose_device(device_name)
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
@@ -56,6 +101,13 @@ def load_predictor(checkpoint_path: str, device_name: str = "auto") -> LoadedPre
 
     train_args = checkpoint.get("train_args", {})
     max_seconds = float(train_args.get("max_seconds", DEFAULT_MAX_SECONDS))
+    nanopitch_vad_path = nanopitch_vad_checkpoint if use_nanopitch_vad else None
+    if use_nanopitch_vad and nanopitch_vad_path is None:
+        nanopitch_vad_path = resolve_default_nanopitch_vad_checkpoint()
+
+    nanopitch_vad_model = None
+    if nanopitch_vad_path is not None and os.path.exists(nanopitch_vad_path):
+        nanopitch_vad_model = load_nanopitch_vad_model(nanopitch_vad_path, device)
 
     return LoadedPredictor(
         checkpoint_path=checkpoint_path,
@@ -65,6 +117,8 @@ def load_predictor(checkpoint_path: str, device_name: str = "auto") -> LoadedPre
         max_seconds=max_seconds,
         checkpoint_epoch=checkpoint.get("epoch"),
         val_metrics=dict(checkpoint.get("val_metrics") or {}),
+        nanopitch_vad_path=nanopitch_vad_path,
+        nanopitch_vad_model=nanopitch_vad_model,
     )
 
 
@@ -92,26 +146,62 @@ def _chunk_mel(mel: torch.Tensor, max_frames: int) -> list[tuple[torch.Tensor, t
     return chunks
 
 
+def _nanopitch_vad_probs(predictor: LoadedPredictor, audio: torch.Tensor, total_frames: int) -> torch.Tensor | None:
+    if predictor.nanopitch_vad_model is None:
+        return None
+
+    mel = log_mel_spectrogram(audio, n_mels=40)
+    with torch.no_grad():
+        vad_probs, _pitch, _states = predictor.nanopitch_vad_model(mel.unsqueeze(0).to(predictor.device))
+    vad = vad_probs.detach().cpu().squeeze(0).squeeze(-1)
+
+    if vad.numel() == total_frames:
+        return vad
+    if vad.numel() < 1:
+        return torch.ones(total_frames, dtype=torch.float32)
+    vad = torch.nn.functional.interpolate(
+        vad.view(1, 1, -1),
+        size=total_frames,
+        mode="linear",
+        align_corners=False,
+    ).view(-1)
+    return vad.clamp(0.0, 1.0)
+
+
 def predict_outputs(predictor: LoadedPredictor, audio_path: str) -> dict[str, torch.Tensor]:
     audio = load_wav_mono(audio_path)
     mel = log_mel_spectrogram(audio, n_mels=int(predictor.model_kwargs.get("n_mels", DEFAULT_N_MELS)))
     max_frames = max(1, int(round(predictor.max_seconds / FRAME_HOP_SECONDS)))
+    external_vad = _nanopitch_vad_probs(predictor, audio, total_frames=mel.size(0))
 
     chunk_outputs = []
+    frame_offset = 0
     for chunk, frame_mask, valid_frames in _chunk_mel(mel, max_frames):
         normalized_chunk = (chunk - chunk.mean()) / chunk.std().clamp_min(1e-5)
+        voice_activity_mask = None
+        if external_vad is not None:
+            vad_chunk = external_vad[frame_offset : frame_offset + valid_frames]
+            if valid_frames < max_frames:
+                vad_chunk = torch.nn.functional.pad(vad_chunk, (0, max_frames - valid_frames))
+            voice_activity_mask = vad_chunk.unsqueeze(0).to(predictor.device)
         with torch.no_grad():
             outputs = predictor.model(
                 normalized_chunk.unsqueeze(0).to(predictor.device),
                 frame_mask=frame_mask.unsqueeze(0).to(predictor.device),
+                voice_activity_mask=voice_activity_mask,
             )
+        vad_logits = outputs["vad_logits"].detach().cpu()[0, :valid_frames]
+        if external_vad is not None:
+            vad_probs = external_vad[frame_offset : frame_offset + valid_frames].clamp(1e-4, 1.0 - 1e-4)
+            vad_logits = torch.logit(vad_probs)
         chunk_outputs.append(
             {
-                "vad_logits": outputs["vad_logits"].detach().cpu()[0, :valid_frames],
+                "vad_logits": vad_logits,
                 "technique_logits": outputs["technique_logits"].detach().cpu()[0, :valid_frames],
                 "clip_logits": outputs["clip_logits"].detach().cpu()[0],
             }
         )
+        frame_offset += valid_frames
 
     return {
         "vad_logits": torch.cat([item["vad_logits"] for item in chunk_outputs], dim=0).unsqueeze(0),
@@ -132,7 +222,12 @@ def predict_summary(
 
 def main() -> None:
     args = parse_args()
-    predictor = load_predictor(args.checkpoint, device_name=args.device)
+    predictor = load_predictor(
+        args.checkpoint,
+        device_name=args.device,
+        nanopitch_vad_checkpoint=args.nanopitch_vad_checkpoint,
+        use_nanopitch_vad=not args.disable_nanopitch_vad,
+    )
     summary = predict_summary(predictor, args.audio, target_family=args.target_family)
     text = summary_to_json(summary)
     print(text)
