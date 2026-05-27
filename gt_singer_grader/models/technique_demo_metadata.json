@@ -1,0 +1,37 @@
+{
+  "source_checkpoint": "c:\\MUSIC_AI_CLASS\\NanoPitch\\gt_singer_grader\\runs\\exp2_detail\\checkpoints\\best.pth",
+  "packaged_checkpoint": "c:\\MUSIC_AI_CLASS\\NanoPitch\\gt_singer_grader\\models\\technique_demo_best.pth",
+  "best_epoch": 76,
+  "val_metrics": {
+    "loss": 2.426780508805628,
+    "clip_loss": 2.2058264730778867,
+    "vad_loss": 0.12388114263750102,
+    "tech_loss": 0.26255680192006775,
+    "clip_acc": 0.6575342416763306,
+    "tech_macro_f1": 0.497446122029455
+  },
+  "train_args": {
+    "dataset_root": "./gt_singer_grader/data/GTSinger",
+    "language": "English",
+    "output_dir": "./gt_singer_grader/runs/exp2_detail",
+    "resume": null,
+    "device": "cuda",
+    "epochs": 100,
+    "batch_size": 4,
+    "lr": 0.0002,
+    "weight_decay": 0.0002,
+    "num_workers": 0,
+    "seed": 1337,
+    "val_ratio": 0.1,
+    "n_mels": 80,
+    "max_seconds": 10.0,
+    "conv_size": 128,
+    "hidden_size": 192,
+    "gru_layers": 3,
+    "dropout": 0.3,
+    "clip_loss_weight": 1.0,
+    "vad_loss_weight": 0.3,
+    "tech_loss_weight": 0.7,
+    "include_speech": false
+  }
+}

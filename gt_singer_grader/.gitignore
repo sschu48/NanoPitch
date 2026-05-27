@@ -1,0 +1,8 @@
+__pycache__/
+data/
+runs/
+*.pt
+*.pth
+*.jsonl
+!models/
+!models/technique_demo_best.pth
