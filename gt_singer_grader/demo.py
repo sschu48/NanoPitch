@@ -86,8 +86,10 @@ def _render_results(filename: str, summary: dict[str, object], assessment: dict[
     }.get(str(assessment.get("status", "")), "status-neutral")
 
     stats = [
-        ("Detected", str(assessment["detected_family_display"]).title()),
+        ("Detected technique", str(assessment["detected_family_display"]).title()),
         ("Confidence", f"{float(assessment.get('confidence_percent', 0.0)):.1f}%"),
+        ("Runner-up", str(assessment.get("runner_up_family_display", "")).title()),
+        ("Margin", f"{float(assessment.get('family_margin', 0.0)) * 100.0:.1f} pts"),
         ("Voiced audio", f"{float(assessment.get('voiced_ratio_percent', 0.0)):.1f}%"),
     ]
     if "target_family_display" in assessment and assessment["target_family_display"]:
@@ -124,7 +126,7 @@ def _render_results(filename: str, summary: dict[str, object], assessment: dict[
       </div>
       <div class="score-grid">
         <div class="panel inset">
-          <h3>Clip-Level Technique Readout</h3>
+          <h3>Uploaded WAV Technique Ranking</h3>
           {_render_score_rows(summary["family_probabilities"], highlight=str(summary["detected_family"]))}
         </div>
         <div class="panel inset">
@@ -163,7 +165,7 @@ def _render_page(
 
     metric_chips = []
     if checkpoint_epoch is not None:
-        metric_chips.append(f'<span class="chip">Best epoch: {checkpoint_epoch}</span>')
+        metric_chips.append(f'<span class="chip">Checkpoint epoch: {checkpoint_epoch}</span>')
     clip_acc = val_metrics.get("clip_acc")
     tech_f1 = val_metrics.get("tech_macro_f1")
     if clip_acc is not None:

@@ -151,7 +151,7 @@ def build_demo_assessment(summary: dict[str, object]) -> dict[str, object]:
 
     assessment: dict[str, object] = {
         "status": "detected_only",
-        "headline": f"Detected {_family_phrase(detected_family)}",
+        "headline": f"Detected Technique: {_family_phrase(detected_family).title()}",
         "badge": "Technique Detected",
         "detected_family_display": _family_phrase(detected_family),
         "runner_up_family_display": _family_phrase(runner_up_family),
