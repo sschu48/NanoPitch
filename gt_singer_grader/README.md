@@ -68,8 +68,9 @@ VocalSet adds professional singer examples across many techniques. The current
 quality trainer keeps GT Singer as the technique recognizer, then trains a
 separate execution-quality calibrator from VocalSet audio-derived features.
 Because VocalSet does not include explicit good/bad execution ratings, this is
-weak supervision: matching VocalSet technique examples are treated as positive
-professional examples, and mismatched target techniques provide contrast.
+weak supervision: matching professional technique examples are treated as good,
+normal/straight/control-like clips are treated as average, and mismatched target
+techniques provide low-quality contrast.
 
 Download and extract VocalSet 1.2, then train:
 

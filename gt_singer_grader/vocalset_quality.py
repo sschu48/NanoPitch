@@ -6,6 +6,7 @@ VocalSet does not provide explicit good/bad execution ratings, so this trainer
 uses weak supervision:
 
 - matching VocalSet technique labels are high-quality targets;
+- normal/straight/control-like takes are average-quality targets;
 - mismatched target technique pairs are low-quality contrast examples;
 - NanoPitch VAD and pitch consistency provide audio-derived quality features.
 """
@@ -39,6 +40,7 @@ VOCALSET_TECHNIQUE_TO_FAMILY = {
     "glissando": "glissando",
     "messa": "control",
     "messa_di_voce": "control",
+    "normal": "control",
     "spoken": "control",
     "straight": "control",
     "trill": "vibrato",
@@ -46,6 +48,11 @@ VOCALSET_TECHNIQUE_TO_FAMILY = {
     "vibrato": "vibrato",
     "vocal_fry": "pharyngeal",
 }
+
+AVERAGE_TECHNIQUE_TOKENS = {"control", "messa", "messa_di_voce", "normal", "spoken", "straight"}
+GOOD_QUALITY_TARGET = 1.0
+AVERAGE_QUALITY_TARGET = 0.5
+MISMATCH_QUALITY_TARGET = 0.15
 
 
 @dataclass(frozen=True)
@@ -199,7 +206,9 @@ class QualityFeatureDataset(Dataset):
         for row in rows:
             features = json.loads(row["features_json"])
             family = row["family"]
-            self.examples.append((features, 1.0))
+            source_technique = _normalize_token(row.get("source_technique", ""))
+            quality_target = AVERAGE_QUALITY_TARGET if source_technique in AVERAGE_TECHNIQUE_TOKENS else GOOD_QUALITY_TARGET
+            self.examples.append((features, quality_target))
             negative_families = [item for item in families if item != family]
             rng.shuffle(negative_families)
             for negative_family in negative_families[:negatives_per_positive]:
@@ -210,7 +219,7 @@ class QualityFeatureDataset(Dataset):
                 true_index = FAMILY_NAMES.index(family)
                 mutated[0] = mutated[family_offset + target_index]
                 mutated[2] = max(0.0, mutated[family_offset + target_index] - mutated[family_offset + true_index])
-                self.examples.append((mutated, 0.0))
+                self.examples.append((mutated, MISMATCH_QUALITY_TARGET))
 
     def __len__(self) -> int:
         return len(self.examples)
@@ -258,32 +267,38 @@ def train_calibrator(
     input_size = len(train_dataset[0][0])
     model = QualityCalibrator(input_size).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
-    loss_fn = nn.BCEWithLogitsLoss()
+    loss_fn = nn.MSELoss()
 
     def run_epoch(loader: DataLoader, train: bool) -> dict[str, float]:
         model.train(train)
         total_loss = 0.0
         total = 0
-        correct = 0
+        total_abs_err = 0.0
+        within_band = 0
         for features, target in loader:
             features = features.to(device)
             target = target.to(device)
             with torch.set_grad_enabled(train):
-                logits = model(features)
-                loss = loss_fn(logits, target)
+                score = torch.sigmoid(model(features))
+                loss = loss_fn(score, target)
                 if train:
                     optimizer.zero_grad()
                     loss.backward()
                     optimizer.step()
-            probs = torch.sigmoid(logits)
-            correct += int(((probs >= 0.5) == (target >= 0.5)).sum().item())
+            abs_err = torch.abs(score - target)
+            total_abs_err += float(abs_err.sum().item())
+            within_band += int((abs_err <= 0.2).sum().item())
             total += int(target.numel())
             total_loss += float(loss.item()) * int(target.numel())
-        return {"loss": total_loss / max(1, total), "acc": correct / max(1, total)}
+        return {
+            "loss": total_loss / max(1, total),
+            "mae": total_abs_err / max(1, total),
+            "within_0p20": within_band / max(1, total),
+        }
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-    best_acc = -math.inf
+    best_score = -math.inf
     for epoch in range(1, epochs + 1):
         train_metrics = run_epoch(train_loader, train=True)
         val_metrics = run_epoch(val_loader, train=False)
@@ -294,11 +309,17 @@ def train_calibrator(
             "input_size": input_size,
             "train_metrics": train_metrics,
             "val_metrics": val_metrics,
-            "note": "Weakly supervised VocalSet quality calibrator; positives are matching professional takes, negatives are mismatched technique targets.",
+            "quality_targets": {
+                "professional_matching_technique": GOOD_QUALITY_TARGET,
+                "normal_or_control_like_clip": AVERAGE_QUALITY_TARGET,
+                "mismatched_target_technique": MISMATCH_QUALITY_TARGET,
+            },
+            "note": "Weakly supervised VocalSet quality regressor; professional matching technique takes are good, normal/control-like clips are average, and mismatched target techniques are low-quality contrast.",
         }
         torch.save(checkpoint, os.path.join(output_dir, f"epoch_{epoch:03d}.pth"))
-        if val_metrics["acc"] >= best_acc:
-            best_acc = val_metrics["acc"]
+        score = -val_metrics["mae"]
+        if score >= best_score:
+            best_score = score
             torch.save(checkpoint, os.path.join(output_dir, "best.pth"))
 
 
