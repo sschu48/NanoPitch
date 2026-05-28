@@ -93,6 +93,34 @@ dynamics. The technique card reports that the service is unavailable.
 - The original detector probe remains useful for low-level debugging, but the
   delivery app is now `coach/web/`.
 
+## Repository boundaries after merge
+
+`main` should become the stable Project 2 MVP baseline after this PR merges.
+Future work should branch from `main` instead of continuing from the old split
+demo branches.
+
+Recommended branch pattern:
+
+```text
+feature/*     browser UI, report, recording, and analysis improvements
+technique/*   GT Singer model training, evaluation, export, and checkpoint work
+```
+
+Keep these boundaries clean:
+
+- Browser/product work lives under `coach/web/`.
+- NanoPitch WASM/model deployment assets stay under `deployment/web/`.
+- Technique service and model code live under `server/technique/`.
+- Training data, local worktrees, virtual environments, and experiment runs are
+  not submission artifacts.
+
+If the technique model improves later, make that a focused PR with:
+
+- the model/code change,
+- the updated packaged checkpoint or metadata,
+- before/after validation metrics,
+- a quick browser/API compatibility check.
+
 ## Next steps
 
 1. Add song/reference mode so pitch and tempo can be scored against targets.
