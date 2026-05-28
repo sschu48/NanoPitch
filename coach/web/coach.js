@@ -552,7 +552,7 @@ function activeTimelineWindow(frames, duration) {
 }
 
 function isPitchDisplayFrame(frame) {
-  return frame && frame.f0_hz > 0 && (frame.voiced || frame.vad > 0.12);
+  return frame && frame.f0_hz > 0 && Number.isFinite(frame.f0_hz);
 }
 
 function drawLaneGrid(ctx, x0, x1, lane, ratio) {
@@ -568,36 +568,63 @@ function drawLaneGrid(ctx, x0, x1, lane, ratio) {
 }
 
 function drawPitchTrace(ctx, frames, xFor, yPitch, ratio) {
+  const points = [];
+  let smoothedMidi = null;
+  let lastTime = null;
+
+  for (const frame of frames) {
+    if (!isPitchDisplayFrame(frame)) continue;
+
+    const gap = lastTime == null ? 0 : frame.time_s - lastTime;
+    const midi = NanoPitchAnalyzer.hzToMidi(frame.f0_hz);
+    if (!Number.isFinite(midi)) continue;
+
+    if (smoothedMidi == null || gap > 0.45 || Math.abs(midi - smoothedMidi) > 8) {
+      smoothedMidi = midi;
+    } else {
+      smoothedMidi = 0.35 * midi + 0.65 * smoothedMidi;
+    }
+
+    points.push({
+      x: xFor(frame.time_s),
+      y: yPitch(smoothedMidi),
+      time_s: frame.time_s,
+      strong: frame.voiced || frame.vad > 0.12,
+    });
+    lastTime = frame.time_s;
+  }
+
+  if (!points.length) return;
+
   ctx.strokeStyle = '#67d5b5';
   ctx.lineWidth = 2.4 * ratio;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   ctx.beginPath();
   let started = false;
-  let lastTime = null;
-  let smoothedMidi = null;
-  for (const frame of frames) {
-    if (!isPitchDisplayFrame(frame)) {
-      continue;
-    }
-    const gap = lastTime == null ? 0 : frame.time_s - lastTime;
-    const midi = NanoPitchAnalyzer.hzToMidi(frame.f0_hz);
-    if (smoothedMidi == null || gap > 0.28 || Math.abs(midi - smoothedMidi) > 8) {
-      smoothedMidi = midi;
-    } else {
-      smoothedMidi = 0.35 * midi + 0.65 * smoothedMidi;
-    }
-    const x = xFor(frame.time_s);
-    const y = yPitch(smoothedMidi);
-    if (!started || gap > 0.28) {
-      ctx.moveTo(x, y);
+
+  for (let i = 0; i < points.length; i++) {
+    const point = points[i];
+    const prev = points[i - 1];
+    const gap = prev ? point.time_s - prev.time_s : 0;
+    if (!started || gap > 0.45) {
+      ctx.moveTo(point.x, point.y);
       started = true;
     } else {
-      ctx.lineTo(x, y);
+      ctx.lineTo(point.x, point.y);
     }
-    lastTime = frame.time_s;
   }
   ctx.stroke();
+
+  ctx.fillStyle = '#67d5b5';
+  const dotRadius = Math.max(1.8 * ratio, 2);
+  for (const point of points) {
+    ctx.globalAlpha = point.strong ? 0.9 : 0.45;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, point.strong ? dotRadius : dotRadius * 0.8, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
 }
 
 function drawLevelTrace(ctx, frames, xFor, yDb, ratio) {
