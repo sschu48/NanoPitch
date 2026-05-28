@@ -25,3 +25,7 @@ deployment/web/model.json
 
 # log files
 logs/
+
+# generated validation artifacts
+validation/audio/*.wav
+validation/results/
