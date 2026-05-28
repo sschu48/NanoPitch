@@ -140,12 +140,13 @@ function processAudioFrame(samples, timeS) {
     const base = outputPtr >> 2;
     const pitch = new Float32Array(module.HEAPF32.buffer, outputPtr + 4, 360);
     const mel = new Float32Array(module.HEAPF32.buffer, outputPtr + 362 * 4, 40);
+    const pitchBins = new Float32Array(pitch);
     const vad = module.HEAPF32[base];
     const f0 = module.HEAPF32[base + 361];
     let sumSq = 0;
     let pitchConfidence = 0;
     for (let i = 0; i < NanoPitchAnalyzer.FRAME_SIZE; i++) sumSq += samples[i] * samples[i];
-    for (let i = 0; i < pitch.length; i++) pitchConfidence = Math.max(pitchConfidence, pitch[i]);
+    for (let i = 0; i < pitchBins.length; i++) pitchConfidence = Math.max(pitchConfidence, pitchBins[i]);
 
     result = {
       time_s: timeS,
@@ -154,6 +155,7 @@ function processAudioFrame(samples, timeS) {
       f0_hz: f0,
       rms_db: 10 * Math.log10(sumSq / NanoPitchAnalyzer.FRAME_SIZE + 1e-10),
       pitch_confidence: pitchConfidence,
+      pitch_bins: pitchBins,
       mel: Array.from(mel),
     };
   }
@@ -478,19 +480,17 @@ function drawTimeline(frames, onsets = []) {
     onset.time_s >= windowRange.start && onset.time_s <= windowRange.end);
   const viewDuration = Math.max(0.2, windowRange.end - windowRange.start);
 
-  const laneGap = 22 * ratio;
-  const laneH = (plotH - laneGap) / 2;
-  const pitchLane = { y: padT, h: laneH };
-  const levelLane = { y: padT + laneH + laneGap, h: laneH };
-
-  drawLaneGrid(ctx, padL, width - padR, pitchLane, ratio);
-  drawLaneGrid(ctx, padL, width - padR, levelLane, ratio);
+  const laneGap = 20 * ratio;
+  const levelLaneH = Math.max(56 * ratio, Math.floor(plotH * 0.28));
+  const pitchLane = { y: padT, h: plotH - laneGap - levelLaneH };
+  const levelLane = { y: padT + pitchLane.h + laneGap, h: levelLaneH };
 
   const pitchMidis = visibleFrames
     .filter(frame => isPitchDisplayFrame(frame))
     .map(frame => NanoPitchAnalyzer.hzToMidi(frame.f0_hz))
     .filter(Number.isFinite);
-  const pitchScale = scaleFromValues(pitchMidis, 4, 48, 84);
+  const posteriorMidis = collectPosteriorMidis(visibleFrames);
+  const pitchScale = scaleFromValues([...pitchMidis, ...posteriorMidis], 12, 36, 84);
 
   const dbValues = visibleFrames
     .map(frame => frame.rms_db)
@@ -500,6 +500,10 @@ function drawTimeline(frames, onsets = []) {
   const xFor = time => padL + ((time - windowRange.start) / viewDuration) * plotW;
   const yPitch = midi => pitchLane.y + (1 - normalize(midi, pitchScale.min, pitchScale.max)) * pitchLane.h;
   const yDb = db => levelLane.y + (1 - normalize(db, dbScale.min, dbScale.max)) * levelLane.h;
+
+  drawPitchPosterior(ctx, visibleFrames, windowRange, pitchScale, pitchLane, padL, plotW, ratio);
+  drawLaneGrid(ctx, padL, width - padR, pitchLane, ratio);
+  drawLaneGrid(ctx, padL, width - padR, levelLane, ratio);
 
   ctx.strokeStyle = '#e05d43';
   ctx.lineWidth = ratio;
@@ -533,6 +537,7 @@ function activeTimelineWindow(frames, duration) {
       frame.voiced ||
       frame.vad > 0.16 ||
       frame.f0_hz > 0 ||
+      frame.pitch_confidence > 0.08 ||
       frame.rms_db > -55
     ));
 
@@ -558,6 +563,7 @@ function isPitchDisplayFrame(frame) {
 function drawLaneGrid(ctx, x0, x1, lane, ratio) {
   ctx.strokeStyle = '#2c2c2c';
   ctx.lineWidth = ratio;
+  ctx.globalAlpha = 0.72;
   for (let i = 0; i <= 3; i++) {
     const y = lane.y + (lane.h * i) / 3;
     ctx.beginPath();
@@ -565,39 +571,147 @@ function drawLaneGrid(ctx, x0, x1, lane, ratio) {
     ctx.lineTo(x1, y);
     ctx.stroke();
   }
+  ctx.globalAlpha = 1;
+}
+
+function collectPosteriorMidis(frames) {
+  const midis = [];
+  for (const frame of frames) {
+    const peak = strongestPitchBin(frame?.pitch_bins);
+    if (peak.value > 0.08) {
+      midis.push(NanoPitchAnalyzer.hzToMidi(NanoPitchAnalyzer.binToHz(peak.bin)));
+    }
+  }
+  return midis;
+}
+
+function strongestPitchBin(bins) {
+  if (!bins || !bins.length) return { bin: -1, value: 0 };
+  let bin = 0;
+  let value = 0;
+  for (let i = 0; i < bins.length; i++) {
+    if (bins[i] > value) {
+      bin = i;
+      value = bins[i];
+    }
+  }
+  return { bin, value };
+}
+
+function drawPitchPosterior(ctx, frames, windowRange, pitchScale, lane, x0, plotW, ratio) {
+  if (!frames.some(frame => frame.pitch_bins?.length)) return;
+
+  const heatW = Math.max(1, Math.min(900, Math.floor(plotW / ratio)));
+  const heatH = Math.max(1, Math.min(240, Math.floor(lane.h / ratio)));
+  const heatCanvas = document.createElement('canvas');
+  heatCanvas.width = heatW;
+  heatCanvas.height = heatH;
+  const heatCtx = heatCanvas.getContext('2d');
+  const image = heatCtx.createImageData(heatW, heatH);
+  const rowBins = new Float32Array(heatH);
+  const midiSpan = pitchScale.max - pitchScale.min;
+  const gain = 3;
+
+  for (let y = 0; y < heatH; y++) {
+    const midi = pitchScale.max - ((y + 0.5) / heatH) * midiSpan;
+    rowBins[y] = NanoPitchAnalyzer.hzToBin(NanoPitchAnalyzer.midiToHz(midi));
+  }
+
+  let frameIndex = 0;
+  const viewDuration = Math.max(0.2, windowRange.end - windowRange.start);
+  for (let x = 0; x < heatW; x++) {
+    const time = windowRange.start + ((x + 0.5) / heatW) * viewDuration;
+    while (frameIndex < frames.length - 1 && frames[frameIndex + 1].time_s <= time) frameIndex++;
+
+    const current = frames[frameIndex];
+    const next = frames[frameIndex + 1];
+    const frame = next && Math.abs(next.time_s - time) < Math.abs(current.time_s - time)
+      ? next
+      : current;
+    const bins = frame?.pitch_bins;
+
+    for (let y = 0; y < heatH; y++) {
+      const offset = (y * heatW + x) * 4;
+      const value = bins ? samplePitchBin(bins, rowBins[y]) * gain : 0;
+      writePosteriorColor(image.data, offset, value);
+    }
+  }
+
+  heatCtx.putImageData(image, 0, 0);
+  const prevSmoothing = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(heatCanvas, x0, lane.y, plotW, lane.h);
+  ctx.imageSmoothingEnabled = prevSmoothing;
+}
+
+function samplePitchBin(bins, bin) {
+  if (!bins || bin < 0 || bin > bins.length - 1) return 0;
+  const lo = Math.floor(bin);
+  const hi = Math.min(bins.length - 1, lo + 1);
+  const frac = bin - lo;
+  return bins[lo] * (1 - frac) + bins[hi] * frac;
+}
+
+function writePosteriorColor(data, offset, value) {
+  const t = clamp01(value);
+  let r;
+  let g;
+  let b;
+
+  if (t < 0.5) {
+    const k = t / 0.5;
+    r = 21 + (35 - 21) * k;
+    g = 21 + (135 - 21) * k;
+    b = 21 + (111 - 21) * k;
+  } else {
+    const k = (t - 0.5) / 0.5;
+    r = 35 + (227 - 35) * k;
+    g = 135 + (176 - 135) * k;
+    b = 111 + (75 - 111) * k;
+  }
+
+  data[offset] = r;
+  data[offset + 1] = g;
+  data[offset + 2] = b;
+  data[offset + 3] = 255;
 }
 
 function drawPitchTrace(ctx, frames, xFor, yPitch, ratio) {
   const points = [];
-  let smoothedMidi = null;
-  let lastTime = null;
 
   for (const frame of frames) {
     if (!isPitchDisplayFrame(frame)) continue;
 
-    const gap = lastTime == null ? 0 : frame.time_s - lastTime;
     const midi = NanoPitchAnalyzer.hzToMidi(frame.f0_hz);
     if (!Number.isFinite(midi)) continue;
 
-    if (smoothedMidi == null || gap > 0.45 || Math.abs(midi - smoothedMidi) > 8) {
-      smoothedMidi = midi;
-    } else {
-      smoothedMidi = 0.35 * midi + 0.65 * smoothedMidi;
-    }
-
     points.push({
       x: xFor(frame.time_s),
-      y: yPitch(smoothedMidi),
+      y: yPitch(midi),
       time_s: frame.time_s,
-      strong: frame.voiced || frame.vad > 0.12,
+      strong: frame.voiced || frame.vad > 0.12 || frame.pitch_confidence > 0.18,
     });
-    lastTime = frame.time_s;
   }
 
   if (!points.length) return;
 
-  ctx.strokeStyle = '#67d5b5';
-  ctx.lineWidth = 2.4 * ratio;
+  strokePitchPolyline(ctx, points, 0.12, '#0b0f0d', 5 * ratio);
+  strokePitchPolyline(ctx, points, 0.12, '#7cf0d0', 2.4 * ratio);
+
+  ctx.fillStyle = '#7cf0d0';
+  const dotRadius = Math.max(1.8 * ratio, 2);
+  for (const point of points) {
+    ctx.globalAlpha = point.strong ? 0.95 : 0.5;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, point.strong ? dotRadius : dotRadius * 0.8, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function strokePitchPolyline(ctx, points, maxGapS, strokeStyle, lineWidth) {
+  ctx.strokeStyle = strokeStyle;
+  ctx.lineWidth = lineWidth;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   ctx.beginPath();
@@ -607,7 +721,7 @@ function drawPitchTrace(ctx, frames, xFor, yPitch, ratio) {
     const point = points[i];
     const prev = points[i - 1];
     const gap = prev ? point.time_s - prev.time_s : 0;
-    if (!started || gap > 0.45) {
+    if (!started || gap > maxGapS) {
       ctx.moveTo(point.x, point.y);
       started = true;
     } else {
@@ -615,16 +729,6 @@ function drawPitchTrace(ctx, frames, xFor, yPitch, ratio) {
     }
   }
   ctx.stroke();
-
-  ctx.fillStyle = '#67d5b5';
-  const dotRadius = Math.max(1.8 * ratio, 2);
-  for (const point of points) {
-    ctx.globalAlpha = point.strong ? 0.9 : 0.45;
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, point.strong ? dotRadius : dotRadius * 0.8, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
 }
 
 function drawLevelTrace(ctx, frames, xFor, yDb, ratio) {
@@ -677,6 +781,10 @@ function quantileSorted(sortedValues, p) {
 function normalize(value, min, max) {
   if (max <= min) return 0.5;
   return Math.max(0, Math.min(1, (value - min) / (max - min)));
+}
+
+function clamp01(value) {
+  return Math.max(0, Math.min(1, value));
 }
 
 async function refreshTechniqueHealth() {

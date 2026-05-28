@@ -8,6 +8,9 @@
   const SAMPLE_RATE = 16000;
   const FRAME_SIZE = 160;
   const VAD_THRESHOLD = 0.3;
+  const PITCH_BINS = 360;
+  const PITCH_FMIN = 31.7;
+  const PITCH_CENTS_PER_BIN = 20;
   const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
   function clamp(x, lo, hi) {
@@ -36,6 +39,15 @@
 
   function hzToMidi(hz) {
     return 69 + 12 * Math.log2(hz / 440);
+  }
+
+  function binToHz(bin) {
+    return PITCH_FMIN * Math.pow(2, bin * PITCH_CENTS_PER_BIN / 1200);
+  }
+
+  function hzToBin(hz) {
+    if (!(hz > 0)) return -1;
+    return 1200 * Math.log2(hz / PITCH_FMIN) / PITCH_CENTS_PER_BIN;
   }
 
   function hzToNote(hz) {
@@ -482,8 +494,13 @@
     SAMPLE_RATE,
     FRAME_SIZE,
     VAD_THRESHOLD,
+    PITCH_BINS,
+    PITCH_FMIN,
+    PITCH_CENTS_PER_BIN,
     midiToHz,
     hzToMidi,
+    binToHz,
+    hzToBin,
     hzToNote,
     centsOff,
     beatsToSeconds,

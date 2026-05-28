@@ -21,6 +21,8 @@ http://127.0.0.1:8080/coach/web/
 
 The app records one free take, analyzes that same recorded WAV, and shows a
 unified detection report for pitch, tempo, dynamics, and optional technique.
+The pitch contour keeps NanoPitch's 360-bin confidence view and overlays the
+decoded f0 track used by the report metrics.
 
 Optional technique service:
 

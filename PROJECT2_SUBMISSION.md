@@ -9,7 +9,7 @@ and produces one detection report across the available axes.
 | Area | Status | Where to look |
 |---|---|---|
 | Browser app | Free-take detector dashboard | `coach/web/` |
-| Pitch | Detected from recorded take | NanoPitch WASM |
+| Pitch | Detected from recorded take | NanoPitch WASM posteriorgram + f0 |
 | Tempo | Detected from recorded take | fused novelty + autocorrelation |
 | Dynamics | Detected from recorded take | RMS dBFS range |
 | Technique | Optional local API | `server/technique/api.py` |
@@ -82,7 +82,8 @@ dynamics. The technique card reports that the service is unavailable.
 
 ## Axis details
 
-- **Pitch:** voiced percent, median f0, median note, pitch range, and
+- **Pitch:** NanoPitch pitch-confidence posteriorgram in the take contour,
+  decoded f0 overlay, voiced percent, median f0, median note, pitch range, and
   short-term stability.
 - **Tempo:** onset count, estimated BPM, BPM confidence, and onset spacing.
 - **Dynamics:** average level, peak level, p5/p95 loudness, and range used.
