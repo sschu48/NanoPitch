@@ -2,6 +2,23 @@
 
 Train a neural network that tracks pitch and detects singing in real-time on your laptop, then deploy it to run live in a web browser.
 
+## Project 2 Final MVP
+
+For the Project 2 final MVP branch, start here:
+[PROJECT2_SUBMISSION.md](PROJECT2_SUBMISSION.md).
+
+This branch presents the project as a free-take singing analysis dashboard:
+
+- The browser records one take, saves it as the analysis artifact, and runs
+  pitch, tempo, and dynamics detection from that same audio.
+- Brady's GT Singer technique model is imported under `server/technique/` and
+  exposed through an optional local JSON API.
+- The report is detection-first. It does not claim a grade unless a future
+  score, reference take, or intended technique target is provided.
+
+Serve the repo root and open `/coach/web/`. Run the optional technique service
+with `python3 server/technique/api.py --port 8765`.
+
 ## What You'll Learn
 
 - **How neural networks process audio** — converting sound to mel spectrograms, feeding them through recurrent layers (GRUs), and interpreting the output
