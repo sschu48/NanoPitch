@@ -85,6 +85,40 @@ dynamics. The technique card reports that the service is unavailable.
 - **Technique:** detected family, confidence, voiced percent, technique
   strengths, and family probabilities from the GT Singer model.
 
+## Validation
+
+The follow-up validation harness in `validation/` checks the three browser
+axes that do not require the technique service. It generates synthetic
+known-answer WAV files, runs the same NanoPitch WASM/model path used by the
+browser app, builds the same report shape from `coach/web/analyzer.js`, and
+compares the resulting metrics against tolerances.
+
+Run it from the repo root:
+
+```bash
+node validation/run_validation.js
+```
+
+The harness writes generated WAV fixtures and a visual HTML report to:
+
+```text
+validation/audio/
+validation/results/index.html
+```
+
+Current baseline results:
+
+| Fixture | Axis checked | Result |
+|---|---|---|
+| `pitch_a4_harmonic` | Pitch | 436.5 Hz median f0 vs. 440 Hz target, -13.8 cents |
+| `tempo_120bpm_pulses` | Tempo | 120 BPM estimated vs. 120 BPM target, 11 onsets |
+| `dynamics_constant` | Dynamics | 0.7 dB range, expected low contrast |
+| `dynamics_soft_loud_soft` | Dynamics | 13.8 dB range, expected clear contrast |
+
+All four synthetic fixtures currently pass. This validates basic detector
+plumbing and catches regressions, but it does not replace future testing on
+controlled human vocal clips.
+
 ## What is intentionally not done yet
 
 - This is not song grading yet. Pitch and tempo need a score/MIDI target.
