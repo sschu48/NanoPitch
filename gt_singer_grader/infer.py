@@ -14,7 +14,7 @@ import torch
 
 from .constants import DEFAULT_MAX_SECONDS, DEFAULT_N_MELS, FAMILY_NAMES, FRAME_HOP_SECONDS
 from .features import load_wav_mono, log_mel_spectrogram
-from .feedback import summarize_prediction, summary_to_json
+from .feedback import summarize_prediction, summarize_segments, summary_to_json
 from .model import TechniqueGraderModel
 
 TRAINING_DIR = Path(__file__).resolve().parents[1] / "training"
@@ -215,9 +215,13 @@ def predict_summary(
     audio_path: str,
     *,
     target_family: str | None = None,
+    include_segments: bool = True,
 ) -> dict[str, object]:
     outputs = predict_outputs(predictor, audio_path)
-    return summarize_prediction(outputs, target_family=target_family)
+    summary = summarize_prediction(outputs, target_family=target_family)
+    if include_segments:
+        summary["segments"] = summarize_segments(outputs, target_family=target_family, frame_hop_seconds=FRAME_HOP_SECONDS)
+    return summary
 
 
 def main() -> None:
