@@ -1,0 +1,2 @@
+audio_path,recording_id,singer_id,song_id,families,techniques,split_group,label_source,notes
+data/app_recordings/example.wav,app:example-001,singer_001,free_take_001,vibrato,vibrato,singer_001,human_labeled_app_recording,example row

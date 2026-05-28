@@ -1,0 +1,9 @@
+# Intentionally lightweight.
+#
+# The no-data developer checks use only Python stdlib plus Node.js:
+#
+#   make technique-check-light
+#
+# Install gt_singer_grader/requirements-demo.txt only when running PyTorch
+# inference/training, and install the root requirements.txt only for full
+# NanoPitch training work.

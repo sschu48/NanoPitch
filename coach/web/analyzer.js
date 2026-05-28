@@ -328,24 +328,37 @@
     }
     if (payload.axis_result) return payload.axis_result;
     const summary = payload.summary || payload.prediction || payload;
+    const dominantTechniques = Array.isArray(summary.dominant_techniques)
+      ? Object.fromEntries(summary.dominant_techniques
+        .filter(item => item && item.technique)
+        .map(item => [item.technique, item.score]))
+      : null;
     return {
       axis: 'technique',
-      mode: 'detection',
-      available: Boolean(summary.detected_family),
+      mode: summary.target_family ? 'targeted_detection' : 'multi_label_detection',
+      available: Boolean(summary.detected_family)
+        && summary.detection_status !== 'not_enough_voice'
+        && summary.detection_status !== 'no_clear_technique',
       headline: summary.detected_family
         ? `Detected ${String(summary.detected_family).replaceAll('_', ' ')}`
         : 'Technique result received',
       feedback: summary.feedback || 'Technique probabilities are reported as detected model activity.',
       metrics: {
+        status: summary.detection_status || null,
         detected_family: summary.detected_family || null,
+        primary_technique: summary.primary_technique || null,
+        primary_technique_score_percent: summary.primary_technique_score != null
+          ? round(summary.primary_technique_score * 100, 1)
+          : null,
         confidence_percent: summary.detected_confidence != null
           ? round(summary.detected_confidence * 100, 1)
           : null,
         voiced_percent: summary.voiced_ratio != null ? round(summary.voiced_ratio * 100, 1) : null,
         family_margin: summary.family_margin != null ? round(summary.family_margin, 3) : null,
+        dominant_techniques: dominantTechniques,
         technique_scores: summary.technique_scores || null,
       },
-      timeline: [],
+      timeline: summary.technique_timeline || [],
     };
   }
 

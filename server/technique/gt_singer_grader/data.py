@@ -23,7 +23,7 @@ from .constants import (
     SAMPLE_RATE,
     TECHNIQUE_FOLDER_TO_FAMILY,
 )
-from .features import load_wav_mono, log_mel_spectrogram
+from .features import augment_user_recording_audio, load_wav_mono, log_mel_spectrogram
 from .labels import build_frame_labels, load_alignment
 
 
@@ -115,12 +115,21 @@ def split_records(
     records: Iterable[SampleRecord],
     val_ratio: float = 0.2,
     seed: int = 1337,
+    group_by: str = "song",
 ) -> tuple[list[SampleRecord], list[SampleRecord]]:
-    """Split by speaker/family/song so paired clips stay together."""
+    """Split records while keeping related clips on one side of the split."""
+    if group_by not in {"song", "speaker"}:
+        raise ValueError(f"unknown split group: {group_by}")
+
+    def split_key(record: SampleRecord) -> str:
+        if group_by == "speaker":
+            return record.speaker
+        return record.split_group
+
     family_groups: dict[str, list[str]] = defaultdict(list)
     record_list = list(records)
     for record in record_list:
-        family_groups[record.family].append(record.split_group)
+        family_groups[record.family].append(split_key(record))
 
     rng = random.Random(seed)
     val_groups: set[str] = set()
@@ -133,8 +142,8 @@ def split_records(
         n_val = min(n_val, len(unique_groups) - 1)
         val_groups.update(unique_groups[:n_val])
 
-    train_records = [record for record in record_list if record.split_group not in val_groups]
-    val_records = [record for record in record_list if record.split_group in val_groups]
+    train_records = [record for record in record_list if split_key(record) not in val_groups]
+    val_records = [record for record in record_list if split_key(record) in val_groups]
     return train_records, val_records
 
 
@@ -163,6 +172,7 @@ class GTSingerTechniqueDataset(Dataset):
         hop_seconds: float = FRAME_HOP_SECONDS,
         max_seconds: float = DEFAULT_MAX_SECONDS,
         training: bool = True,
+        audio_augmentation: bool = False,
     ) -> None:
         self.records = list(records)
         self.sample_rate = sample_rate
@@ -170,6 +180,7 @@ class GTSingerTechniqueDataset(Dataset):
         self.hop_seconds = hop_seconds
         self.max_frames = max(1, int(round(max_seconds / hop_seconds)))
         self.training = training
+        self.audio_augmentation = audio_augmentation
 
     def __len__(self) -> int:
         return len(self.records)
@@ -186,6 +197,8 @@ class GTSingerTechniqueDataset(Dataset):
     def __getitem__(self, index: int) -> dict[str, torch.Tensor | int | str]:
         record = self.records[index]
         audio = load_wav_mono(record.wav_path, self.sample_rate)
+        if self.training and self.audio_augmentation:
+            audio = augment_user_recording_audio(audio, self.sample_rate)
         mel = log_mel_spectrogram(audio, sample_rate=self.sample_rate, n_mels=self.n_mels, hop_seconds=self.hop_seconds)
         mel = (mel - mel.mean()) / mel.std().clamp_min(1e-5)
 

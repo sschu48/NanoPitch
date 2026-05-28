@@ -38,6 +38,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--val-ratio", type=float, default=0.2)
+    parser.add_argument(
+        "--split-group",
+        choices=("song", "speaker"),
+        default="song",
+        help="Validation grouping: song keeps paired GT Singer takes together; speaker holds out whole singers.",
+    )
     parser.add_argument("--n-mels", type=int, default=DEFAULT_N_MELS)
     parser.add_argument("--max-seconds", type=float, default=DEFAULT_MAX_SECONDS)
     parser.add_argument("--conv-size", type=int, default=96)
@@ -47,6 +53,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--clip-loss-weight", type=float, default=1.0)
     parser.add_argument("--vad-loss-weight", type=float, default=0.3)
     parser.add_argument("--tech-loss-weight", type=float, default=0.7)
+    parser.add_argument(
+        "--user-audio-augmentation",
+        action="store_true",
+        help="Apply lightweight noise/gain/room/mic augmentation to GT Singer audio during training.",
+    )
     parser.add_argument("--include-speech", action="store_true", help="Include Paired_Speech_Group in the scan")
     return parser.parse_args()
 
@@ -189,7 +200,12 @@ def main() -> None:
     os.makedirs(os.path.join(output_dir, "checkpoints"), exist_ok=True)
 
     records = scan_gt_singer(args.dataset_root, language=args.language, include_speech=args.include_speech)
-    train_records, val_records = split_records(records, val_ratio=args.val_ratio, seed=args.seed)
+    train_records, val_records = split_records(
+        records,
+        val_ratio=args.val_ratio,
+        seed=args.seed,
+        group_by=args.split_group,
+    )
 
     write_manifest(os.path.join(output_dir, "train_manifest.jsonl"), train_records)
     write_manifest(os.path.join(output_dir, "val_manifest.jsonl"), val_records)
@@ -202,6 +218,7 @@ def main() -> None:
         n_mels=args.n_mels,
         max_seconds=args.max_seconds,
         training=True,
+        audio_augmentation=args.user_audio_augmentation,
     )
     val_dataset = GTSingerTechniqueDataset(
         val_records,

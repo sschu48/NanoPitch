@@ -6,6 +6,12 @@ This module is a separate singing-grader pipeline that sits beside NanoPitch. It
 - a dedicated VAD head so we grade voiced singing instead of silence
 - the same onset penalty (`0.75`) for smoothing voiced/unvoiced decisions during feedback
 
+For the model-building roadmap, dataset choices, manifest schema, and evaluation
+gates, see [`MODEL_DEVELOPMENT.md`](MODEL_DEVELOPMENT.md).
+
+For no-data/no-model onboarding and light checks, see
+[`DEVELOPER_SETUP.md`](DEVELOPER_SETUP.md).
+
 ## What it trains
 
 The first version is a technique grader, not a generic "good singer / bad singer" model. It learns from GT Singer control-vs-emphasis pairs and predicts:
@@ -51,6 +57,8 @@ cd NanoPitch/server/technique
 python3 -m gt_singer_grader.train \
   --dataset-root ./gt_singer_grader/data/GTSinger \
   --output-dir ./gt_singer_grader/runs/exp1 \
+  --split-group speaker \
+  --user-audio-augmentation \
   --epochs 20 \
   --batch-size 8
 ```
@@ -135,6 +143,6 @@ technique, and returns:
 ## Notes
 
 - `Paired_Speech_Group` is skipped by default for now.
-- Validation splits are grouped by `speaker + parent technique folder + song` so control, mixed-voice, and falsetto takes from the same song stay together and do not leak across train/val.
+- Validation can be grouped with `--split-group song` or `--split-group speaker`. Use `speaker` for a more realistic generalization check; it keeps entire GT Singer performers out of training.
 - Audio loading uses only Python stdlib + PyTorch, so there are no new heavy dependencies beyond the repo's existing stack.
 - The packaged demo checkpoint lives at `gt_singer_grader/models/technique_demo_best.pth`.

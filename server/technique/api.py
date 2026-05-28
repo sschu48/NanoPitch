@@ -49,13 +49,24 @@ def display_name(value: str) -> str:
 def build_axis_result(summary: dict[str, Any], assessment: dict[str, Any]) -> dict[str, Any]:
     target_family = summary.get("target_family")
     detected_family = str(summary.get("detected_family", "unknown"))
-    available = assessment.get("status") != "not_enough_voice"
+    status = str(assessment.get("status") or summary.get("detection_status") or "")
+    available = status not in {"not_enough_voice", "no_clear_technique"}
+    dominant_techniques = summary.get("dominant_techniques") or []
+    dominant_score_map = {
+        str(item.get("technique")): float(item.get("score", 0.0))
+        for item in dominant_techniques
+        if isinstance(item, dict) and item.get("technique")
+    }
 
     metrics: dict[str, Any] = {
+        "status": status or None,
         "detected_family": detected_family,
+        "primary_technique": summary.get("primary_technique"),
+        "primary_technique_score_percent": round(float(summary.get("primary_technique_score", 0.0)) * 100.0, 1),
         "confidence_percent": round(float(summary.get("detected_confidence", 0.0)) * 100.0, 1),
         "voiced_percent": round(float(summary.get("voiced_ratio", 0.0)) * 100.0, 1),
         "family_margin": round(float(summary.get("family_margin", 0.0)), 3),
+        "dominant_techniques": dominant_score_map or None,
         "technique_scores": summary.get("technique_scores", {}),
         "family_probabilities": summary.get("family_probabilities", {}),
     }
@@ -77,7 +88,7 @@ def build_axis_result(summary: dict[str, Any], assessment: dict[str, Any]) -> di
         "headline": assessment.get("headline") or f"Detected {display_name(detected_family)}",
         "feedback": assessment.get("feedback") or "Technique probabilities are reported as model activity.",
         "metrics": metrics,
-        "timeline": [],
+        "timeline": summary.get("technique_timeline", []),
     }
 
 
