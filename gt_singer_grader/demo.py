@@ -77,6 +77,62 @@ def _render_score_rows(
     return "".join(rows)
 
 
+def _render_timeline_segments(segments: list[dict[str, object]]) -> str:
+    if not segments:
+        return """
+        <div class="panel inset timeline-panel">
+          <h3>Section Timeline</h3>
+          <p class="hint">No phrase-sized voiced sections were found. Try a longer take with clearer singing.</p>
+        </div>
+        """
+
+    rows = []
+    for segment in segments:
+        status_class = {
+            "well_done": "status-good",
+            "developing": "status-warn",
+            "needs_work": "status-bad",
+            "uncertain": "status-warn",
+            "not_enough_voice": "status-warn",
+            "detected_only": "status-neutral",
+        }.get(str(segment.get("status", "")), "status-neutral")
+        start = float(segment.get("start_seconds", 0.0))
+        end = float(segment.get("end_seconds", 0.0))
+        detected = _display_name(str(segment.get("detected_family", "unknown"))).title()
+        confidence = float(segment.get("detected_confidence", 0.0)) * 100.0
+        grade = segment.get("grade")
+        grade_text = "Detection only" if grade is None else f"{float(grade):.1f}/100"
+        feedback = str(segment.get("feedback", ""))
+        badge = str(segment.get("badge", "Section"))
+        rows.append(
+            f"""
+            <article class="timeline-item">
+              <div class="timeline-time">{start:.1f}s - {end:.1f}s</div>
+              <div class="timeline-body">
+                <div class="timeline-topline">
+                  <span class="badge {status_class}">{html.escape(badge)}</span>
+                  <strong>{html.escape(detected)}</strong>
+                </div>
+                <div class="timeline-metrics">
+                  <span>Score: {html.escape(grade_text)}</span>
+                  <span>Confidence: {confidence:.1f}%</span>
+                </div>
+                <p>{html.escape(feedback)}</p>
+              </div>
+            </article>
+            """
+        )
+
+    return f"""
+    <div class="panel inset timeline-panel">
+      <h3>Section Timeline</h3>
+      <div class="timeline-list">
+        {''.join(rows)}
+      </div>
+    </div>
+    """
+
+
 def _render_results(filename: str, summary: dict[str, object], assessment: dict[str, object]) -> str:
     status_class = {
         "well_done": "status-good",
@@ -136,6 +192,7 @@ def _render_results(filename: str, summary: dict[str, object], assessment: dict[
           {_render_score_rows(summary["technique_scores"])}
         </div>
       </div>
+      {_render_timeline_segments(list(summary.get("segments", [])))}
       <details class="details-block">
         <summary>Show raw prediction JSON</summary>
         <pre>{html.escape(details_json)}</pre>
@@ -454,6 +511,53 @@ def _render_page(
     .score-fill-hot {{
       background: linear-gradient(90deg, #f1a66d 0%, #d56b43 100%);
     }}
+    .timeline-panel {{
+      padding: 20px;
+    }}
+    .timeline-list {{
+      display: grid;
+      gap: 12px;
+      margin-top: 14px;
+    }}
+    .timeline-item {{
+      display: grid;
+      grid-template-columns: 110px 1fr;
+      gap: 14px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255,255,255,0.62);
+    }}
+    .timeline-time {{
+      color: var(--muted);
+      font-weight: 700;
+      font-size: 0.92rem;
+    }}
+    .timeline-body {{
+      display: grid;
+      gap: 8px;
+    }}
+    .timeline-topline {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }}
+    .timeline-topline .badge {{
+      margin: 0;
+    }}
+    .timeline-metrics {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }}
+    .timeline-body p {{
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.45;
+    }}
     .details-block {{
       border-top: 1px solid var(--line);
       padding-top: 16px;
@@ -478,6 +582,7 @@ def _render_page(
     }}
     @media (max-width: 720px) {{
       .result-hero {{ grid-template-columns: 1fr; }}
+      .timeline-item {{ grid-template-columns: 1fr; }}
       .shell {{ padding: 20px 14px 36px; }}
     }}
   </style>

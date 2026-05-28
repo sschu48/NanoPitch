@@ -72,6 +72,181 @@ def _format_feedback(target_family: str, target_strength: float, off_target_stre
     return f"The {_family_phrase(target_family)} profile is coming through clearly."
 
 
+def _merge_short_gaps(mask: np.ndarray, max_gap_frames: int) -> np.ndarray:
+    if max_gap_frames <= 0 or mask.size == 0:
+        return mask
+
+    merged = mask.copy()
+    active = np.flatnonzero(merged > 0.5)
+    if active.size == 0:
+        return merged
+
+    start = int(active[0])
+    end = int(active[-1]) + 1
+    cursor = start
+    while cursor < end:
+        if merged[cursor] > 0.5:
+            cursor += 1
+            continue
+        gap_start = cursor
+        while cursor < end and merged[cursor] <= 0.5:
+            cursor += 1
+        if cursor - gap_start <= max_gap_frames:
+            merged[gap_start:cursor] = 1.0
+    return merged
+
+
+def _voiced_regions(mask: np.ndarray) -> list[tuple[int, int]]:
+    regions = []
+    start = None
+    for index, value in enumerate(mask):
+        if value > 0.5 and start is None:
+            start = index
+        elif value <= 0.5 and start is not None:
+            regions.append((start, index))
+            start = None
+    if start is not None:
+        regions.append((start, mask.size))
+    return regions
+
+
+def _score_segment_family(technique_scores: dict[str, float]) -> dict[str, float]:
+    raw_scores: dict[str, float] = {}
+    max_technique = max(technique_scores.values()) if technique_scores else 0.0
+    for family in FAMILY_NAMES:
+        technique_keys = PRIMARY_FAMILY_TO_TECHNIQUES[family]
+        if family == "control":
+            raw_scores[family] = max(0.0, 1.0 - max_technique)
+        elif technique_keys:
+            raw_scores[family] = float(np.mean([technique_scores[key] for key in technique_keys]))
+        else:
+            raw_scores[family] = 0.0
+
+    total = sum(raw_scores.values())
+    if total <= 1e-8:
+        return {family: 1.0 / len(FAMILY_NAMES) for family in FAMILY_NAMES}
+    return {family: float(score / total) for family, score in raw_scores.items()}
+
+
+def _target_strengths(
+    technique_scores: dict[str, float],
+    target_family: str,
+) -> tuple[float, float]:
+    target_keys = PRIMARY_FAMILY_TO_TECHNIQUES[target_family]
+    if target_family == "control":
+        off_target_strength = max(technique_scores.values()) if technique_scores else 0.0
+        return 1.0 - off_target_strength, off_target_strength
+
+    target_strength = float(np.mean([technique_scores[key] for key in target_keys]))
+    off_target_values = [score for key, score in technique_scores.items() if key not in set(target_keys)]
+    off_target_strength = float(np.mean(off_target_values)) if off_target_values else 0.0
+    return target_strength, off_target_strength
+
+
+def _segment_status(grade: float | None, confidence: float, voiced_ratio: float) -> tuple[str, str]:
+    if voiced_ratio < 0.15:
+        return "not_enough_voice", "Too Short"
+    if grade is None:
+        if confidence >= 0.45:
+            return "detected_only", "Detected"
+        return "uncertain", "Uncertain"
+    if grade >= 72.0:
+        return "well_done", "Good"
+    if grade >= 55.0:
+        return "developing", "Average"
+    return "needs_work", "Needs Work"
+
+
+def summarize_segments(
+    outputs: dict[str, torch.Tensor],
+    *,
+    target_family: str | None = None,
+    onset_penalty: float = DEFAULT_ONSET_PENALTY,
+    frame_hop_seconds: float = 0.010,
+    min_segment_seconds: float = 0.55,
+    max_segment_seconds: float = 3.0,
+    merge_gap_seconds: float = 0.25,
+) -> list[dict[str, object]]:
+    """Score phrase-sized voiced regions so the demo can show local coaching notes."""
+    vad_logits = outputs["vad_logits"].detach().cpu().squeeze(0)
+    technique_logits = outputs["technique_logits"].detach().cpu().squeeze(0)
+    technique_probs = torch.sigmoid(technique_logits).numpy()
+    voiced_mask = smooth_binary_predictions(vad_logits, onset_penalty=onset_penalty)
+    if voiced_mask.sum() < 3:
+        voiced_mask = (torch.sigmoid(vad_logits) > 0.5).numpy().astype(np.float32)
+
+    gap_frames = max(1, int(round(merge_gap_seconds / frame_hop_seconds)))
+    min_frames = max(1, int(round(min_segment_seconds / frame_hop_seconds)))
+    max_frames = max(min_frames, int(round(max_segment_seconds / frame_hop_seconds)))
+    voiced_mask = _merge_short_gaps(voiced_mask, gap_frames)
+
+    segments: list[dict[str, object]] = []
+    for region_start, region_end in _voiced_regions(voiced_mask):
+        cursor = region_start
+        while cursor < region_end:
+            end = min(region_end, cursor + max_frames)
+            if end - cursor < min_frames and segments:
+                previous = segments[-1]
+                previous["end_seconds"] = float(region_end * frame_hop_seconds)
+                previous["duration_seconds"] = float(previous["end_seconds"]) - float(previous["start_seconds"])
+                break
+            if end - cursor >= min_frames:
+                local_mask = voiced_mask[cursor:end]
+                local_probs = technique_probs[cursor:end]
+                voiced_frames = max(float(local_mask.sum()), 1.0)
+                weighted_scores = (local_probs * local_mask[:, None]).sum(axis=0) / voiced_frames
+                technique_scores = {
+                    name: float(weighted_scores[index])
+                    for index, name in enumerate(TECHNIQUE_KEYS)
+                }
+                family_scores = _score_segment_family(technique_scores)
+                ranked_families = sorted(family_scores.items(), key=lambda item: item[1], reverse=True)
+                detected_family, confidence = ranked_families[0]
+                runner_up_family, runner_up_confidence = ranked_families[1] if len(ranked_families) > 1 else ranked_families[0]
+                voiced_ratio = float(np.mean(local_mask))
+                grade = None
+                feedback = f"This section reads most strongly as {_family_phrase(detected_family)}."
+                if target_family is not None:
+                    if target_family not in PRIMARY_FAMILY_TO_TECHNIQUES:
+                        raise ValueError(f"unknown target family: {target_family}")
+                    target_strength, off_target_strength = _target_strengths(technique_scores, target_family)
+                    family_support = family_scores.get(target_family, 0.0)
+                    grade = float(
+                        100.0
+                        * np.clip(0.45 * family_support + 0.55 * target_strength - 0.25 * off_target_strength, 0.0, 1.0)
+                    )
+                    feedback = _format_feedback(target_family, target_strength, off_target_strength, voiced_ratio)
+                else:
+                    target_strength = None
+                    off_target_strength = None
+
+                status, badge = _segment_status(grade, confidence, voiced_ratio)
+                segments.append(
+                    {
+                        "start_seconds": float(cursor * frame_hop_seconds),
+                        "end_seconds": float(end * frame_hop_seconds),
+                        "duration_seconds": float((end - cursor) * frame_hop_seconds),
+                        "detected_family": detected_family,
+                        "detected_confidence": float(confidence),
+                        "runner_up_family": runner_up_family,
+                        "runner_up_confidence": float(runner_up_confidence),
+                        "family_margin": float(confidence - runner_up_confidence),
+                        "family_probabilities": family_scores,
+                        "technique_scores": technique_scores,
+                        "voiced_ratio": voiced_ratio,
+                        "grade": grade,
+                        "target_strength": target_strength,
+                        "off_target_strength": off_target_strength,
+                        "status": status,
+                        "badge": badge,
+                        "feedback": feedback,
+                    }
+                )
+            cursor = end
+
+    return segments
+
+
 def summarize_prediction(
     outputs: dict[str, torch.Tensor],
     *,
