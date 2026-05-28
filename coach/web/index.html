@@ -3,61 +3,501 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NanoPitch Coach</title>
+  <title>NanoPitch Project 2</title>
   <style>
-    body { font-family: -apple-system, system-ui, sans-serif; max-width: 920px; margin: 2rem auto; padding: 0 1rem; color: #222; }
-    h1 { margin: 0 0 0.25rem; }
-    .sub { color: #666; margin-bottom: 1.5rem; }
-    section { margin-bottom: 1.5rem; padding: 1rem; border: 1px solid #ddd; border-radius: 8px; }
-    section h2 { margin-top: 0; font-size: 1rem; text-transform: uppercase; letter-spacing: 0.05em; color: #444; }
-    button { font: inherit; padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid #888; background: #fafafa; cursor: pointer; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    select { font: inherit; padding: 0.4rem; }
-    canvas { display: block; width: 100%; height: 240px; background: #111; border-radius: 4px; }
-    #report { white-space: pre; font-family: ui-monospace, monospace; font-size: 0.85rem; }
-    .row { display: flex; gap: 1rem; align-items: center; }
+    :root {
+      --bg: #11110f;
+      --surface: #fbf7ef;
+      --surface-2: #f0e9dd;
+      --ink: #181713;
+      --muted: #716b61;
+      --line: #d8cfc0;
+      --line-dark: #2b2925;
+      --teal: #23876f;
+      --teal-soft: #dceee8;
+      --amber: #b87912;
+      --amber-soft: #f7ead2;
+      --coral: #c44f3b;
+      --coral-soft: #f4ddd7;
+      --canvas: #151515;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background: var(--bg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    }
+
+    button,
+    select {
+      font: inherit;
+    }
+
+    button {
+      min-height: 38px;
+      padding: 0 14px;
+      border: 1px solid var(--line-dark);
+      border-radius: 6px;
+      color: var(--surface);
+      background: var(--ink);
+      cursor: pointer;
+    }
+
+    button:hover:not(:disabled) {
+      background: #2a2823;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.48;
+    }
+
+    button.secondary {
+      color: var(--ink);
+      background: var(--surface);
+      border-color: var(--line);
+    }
+
+    button.secondary:hover:not(:disabled) {
+      background: var(--surface-2);
+    }
+
+    button.recording {
+      background: var(--coral);
+      border-color: var(--coral);
+    }
+
+    select {
+      min-height: 38px;
+      padding: 0 34px 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--ink);
+      background: var(--surface);
+    }
+
+    a {
+      color: var(--teal);
+      text-decoration: none;
+    }
+
+    a[aria-disabled="true"] {
+      pointer-events: none;
+      color: var(--muted);
+    }
+
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      background: var(--surface);
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.25rem;
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .badge,
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: var(--surface-2);
+      font-size: 0.78rem;
+      white-space: nowrap;
+    }
+
+    [data-tone="good"] {
+      color: var(--teal);
+      background: var(--teal-soft);
+      border-color: #afd4c8;
+    }
+
+    [data-tone="warn"] {
+      color: var(--amber);
+      background: var(--amber-soft);
+      border-color: #e5c995;
+    }
+
+    [data-tone="bad"],
+    [data-tone="recording"] {
+      color: var(--coral);
+      background: var(--coral-soft);
+      border-color: #e1afa4;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface-2);
+    }
+
+    .controls,
+    .technique-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .status-text {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: minmax(320px, 1.1fr) minmax(340px, 0.9fr);
+      gap: 18px;
+      padding: 18px 24px 24px;
+      min-height: 0;
+    }
+
+    .left-stack,
+    .right-stack {
+      display: grid;
+      align-content: start;
+      gap: 18px;
+      min-width: 0;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      overflow: hidden;
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel h2,
+    .axis-card h2 {
+      margin: 0;
+      font-size: 0.98rem;
+      letter-spacing: 0;
+    }
+
+    .live-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px;
+      background: var(--line);
+    }
+
+    .live-meter {
+      min-width: 0;
+      padding: 14px;
+      background: var(--surface);
+    }
+
+    .live-meter strong {
+      display: block;
+      overflow: hidden;
+      color: var(--ink);
+      font-size: clamp(1.2rem, 3vw, 1.85rem);
+      line-height: 1.05;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .live-meter span {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+
+    .canvas-wrap {
+      padding: 12px;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 320px;
+      border-radius: 6px;
+      background: var(--canvas);
+    }
+
+    .axis-grid {
+      display: grid;
+      gap: 12px;
+      padding: 12px;
+    }
+
+    .axis-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fffdf9;
+    }
+
+    .axis-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .axis-name {
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .axis-card p {
+      margin: 8px 0 12px;
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.35;
+    }
+
+    .metric-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .metric-row,
+    .bar-row {
+      display: grid;
+      grid-template-columns: minmax(110px, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      min-height: 28px;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .metric-row strong,
+    .bar-row strong {
+      color: var(--ink);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .metric-group {
+      display: grid;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .bar-row {
+      grid-template-columns: minmax(88px, 0.9fr) minmax(80px, 1.1fr) 42px;
+    }
+
+    .bar-track {
+      height: 8px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      background: var(--teal);
+    }
+
+    .empty-report {
+      padding: 26px 14px;
+      color: var(--muted);
+    }
+
+    .empty-report h2 {
+      color: var(--ink);
+    }
+
+    details {
+      border-top: 1px solid var(--line);
+    }
+
+    summary {
+      cursor: pointer;
+      padding: 12px 14px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    pre {
+      max-height: 360px;
+      margin: 0;
+      padding: 14px;
+      overflow: auto;
+      color: #e8e2d8;
+      background: #171613;
+      font-size: 0.78rem;
+      line-height: 1.45;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    @media (max-width: 920px) {
+      header,
+      .toolbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .status-row,
+      .toolbar {
+        justify-content: flex-start;
+      }
+
+      main {
+        grid-template-columns: 1fr;
+      }
+
+      .live-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 520px) {
+      header,
+      .toolbar,
+      main {
+        padding-left: 14px;
+        padding-right: 14px;
+      }
+
+      .live-grid {
+        grid-template-columns: 1fr;
+      }
+
+      canvas {
+        height: 260px;
+      }
+    }
   </style>
 </head>
 <body>
-  <h1>NanoPitch Coach</h1>
-  <p class="sub">Pick a song, sing along to the metronome, get a per-note quality report.</p>
+  <div class="app">
+    <header>
+      <h1>NanoPitch Project 2</h1>
+      <div class="status-row">
+        <span class="badge" id="model-badge">Loading model</span>
+        <span class="badge" id="technique-badge">Technique unchecked</span>
+      </div>
+    </header>
 
-  <!-- ─── Song selection ─── -->
-  <section>
-    <h2>1. Choose a song</h2>
-    <div class="row">
-      <select id="song-select">
-        <option value="songs/scale.song.json">C Major Scale</option>
-        <option value="songs/twinkle.song.json">Twinkle Twinkle Little Star</option>
-      </select>
-      <span id="song-info"></span>
+    <div class="toolbar">
+      <div class="controls">
+        <button id="record-btn" disabled>Record</button>
+        <a id="download-take" aria-disabled="true">Download take</a>
+        <span class="status-text" id="status">Starting...</span>
+      </div>
+      <div class="technique-controls">
+        <select id="technique-select" aria-label="Technique focus">
+          <option value="">Auto-detect technique</option>
+          <option value="control">Control</option>
+          <option value="breathy">Breathy</option>
+          <option value="glissando">Glissando</option>
+          <option value="mixed_voice">Mixed voice</option>
+          <option value="falsetto">Falsetto</option>
+          <option value="pharyngeal">Pharyngeal</option>
+          <option value="vibrato">Vibrato</option>
+        </select>
+        <button class="secondary" id="refresh-technique">Check technique</button>
+      </div>
     </div>
-  </section>
 
-  <!-- ─── Recording controls ─── -->
-  <section>
-    <h2>2. Record</h2>
-    <div class="row">
-      <button id="record-btn" disabled>Record (loading model…)</button>
-      <span id="status">idle</span>
-    </div>
-  </section>
+    <main>
+      <div class="left-stack">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Live Preview</h2>
+          </div>
+          <div class="live-grid">
+            <div class="live-meter">
+              <strong id="live-vad">-</strong>
+              <span>Voice activity</span>
+            </div>
+            <div class="live-meter">
+              <strong id="live-pitch">-</strong>
+              <span>Pitch Hz</span>
+            </div>
+            <div class="live-meter">
+              <strong id="live-note">-</strong>
+              <span>Nearest note</span>
+            </div>
+            <div class="live-meter">
+              <strong id="live-level">-</strong>
+              <span>Level dBFS</span>
+            </div>
+          </div>
+        </section>
 
-  <!-- ─── Live piano-roll ─── -->
-  <section>
-    <h2>3. Live view</h2>
-    <canvas id="roll"></canvas>
-  </section>
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Take Contour</h2>
+            <span class="pill">Pitch / Level / Onsets</span>
+          </div>
+          <div class="canvas-wrap">
+            <canvas id="take-canvas"></canvas>
+          </div>
+        </section>
+      </div>
 
-  <!-- ─── Post-take report ─── -->
-  <section>
-    <h2>4. Report</h2>
-    <div id="report">No take yet — record to see your score.</div>
-  </section>
+      <div class="right-stack">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Detection Report</h2>
+            <span class="pill">Free take</span>
+          </div>
+          <div class="axis-grid" id="axis-grid"></div>
+          <details>
+            <summary>Report JSON</summary>
+            <pre id="raw-report"></pre>
+          </details>
+        </section>
+      </div>
+    </main>
+  </div>
 
-  <!-- pitch engine: existing WASM build from project 1 -->
   <script src="../../deployment/web/nanopitch.js"></script>
-  <!-- coach app: scoring + recording lifecycle -->
   <script src="analyzer.js"></script>
   <script src="coach.js"></script>
 </body>

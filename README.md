@@ -2,20 +2,22 @@
 
 Train a neural network that tracks pitch and detects singing in real-time on your laptop, then deploy it to run live in a web browser.
 
-## Project 2 Snapshot
+## Project 2 Final MVP
 
-For the Project 2 v1 submission snapshot, start here:
+For the Project 2 final MVP branch, start here:
 [PROJECT2_SUBMISSION.md](PROJECT2_SUBMISSION.md).
 
-This branch presents the current project as two intentionally separate pieces:
+This branch presents the project as a free-take singing analysis dashboard:
 
-- Live browser detector work for NanoPitch pitch/VAD, tempo/onsets, and
-  loudness.
-- Brady's GT Singer technique model prototype, which remains on
-  `origin/brady_dev` and is referenced read-only from the submission doc.
+- The browser records one take, saves it as the analysis artifact, and runs
+  pitch, tempo, and dynamics detection from that same audio.
+- Brady's GT Singer technique model is imported under `server/technique/` and
+  exposed through an optional local JSON API.
+- The report is detection-first. It does not claim a grade unless a future
+  score, reference take, or intended technique target is provided.
 
-Dynamics grading is not implemented yet. The live loudness signal is the
-measurement we would build a dynamics axis from later.
+Serve the repo root and open `/coach/web/`. Run the optional technique service
+with `python3 server/technique/api.py --port 8765`.
 
 ## What You'll Learn
 

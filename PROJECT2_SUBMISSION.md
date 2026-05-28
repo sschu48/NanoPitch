@@ -1,114 +1,101 @@
-# Project 2 v1 Submission Snapshot
+# Project 2 Final MVP
 
-This PR is a snapshot of our current Project 2 progress. It is not meant to
-claim that the full singing coach is finished. The goal is to make the current
-state easy to review: what runs today, what is separate, and what comes next.
+This branch turns Project 2 into one polished free-take analysis flow. The
+system records one audio take, treats that WAV as the shared input artifact,
+and produces one detection report across the available axes.
 
 ## Current status
 
 | Area | Status | Where to look |
 |---|---|---|
-| NanoPitch pitch/VAD | Live in browser | `deployment/web/index.html` |
-| Tempo | Live prototype | `deployment/web/index.html` |
-| Loudness | Live prototype | `deployment/web/index.html` |
-| Dynamics | Not implemented as a grading axis yet | Future work from the loudness signal |
-| Technique | Separate PyTorch/GT Singer prototype | Brady's `origin/brady_dev` branch |
-| Coach UI | Scaffolded, not fully integrated | `coach/web/` |
+| Browser app | Free-take detector dashboard | `coach/web/` |
+| Pitch | Detected from recorded take | NanoPitch WASM |
+| Tempo | Detected from recorded take | fused novelty + autocorrelation |
+| Dynamics | Detected from recorded take | RMS dBFS range |
+| Technique | Optional local API | `server/technique/api.py` |
 
-The live browser page currently shows NanoPitch pitch tracking, onset/tempo
-estimation, and loudness level. It also includes a clarity diagnostic, but
-clarity is not the planned Technique axis.
+This MVP is intentionally detection-first. We do not have a song score,
+reference performance, authored dynamics target, or validated good/bad
+technique target for arbitrary free takes, so the report uses measured
+properties instead of grades.
 
-Technique is intentionally separate right now. Brady's model lives on
-`origin/brady_dev`; this PR does not edit or merge into Brady's branch.
+## Report contract
 
-## How to run the live browser detector
+Every axis reports the same shape:
 
-From this branch:
+```json
+{
+  "axis": "pitch",
+  "mode": "detection",
+  "available": true,
+  "headline": "Pitch contour detected",
+  "feedback": "Detection-first summary text.",
+  "metrics": {},
+  "timeline": []
+}
+```
+
+The browser combines the axis results into one `free_take_detection` report.
+
+## How to run the browser app
 
 ```bash
-cd deployment/web
+# from repo root
 python3 -m http.server 8080
 ```
 
 Open:
 
 ```text
-http://127.0.0.1:8080
+http://127.0.0.1:8080/coach/web/
 ```
 
-Then drag `deployment/web/model.json` onto the page and click
-`Start Microphone`.
+The app loads `../../deployment/web/model.json` automatically. Record a take,
+stop recording, and the app analyzes the recorded 16 kHz WAV.
 
-This demo is the best current view of the live detector work:
+## How to run the technique API
 
-- NanoPitch pitch and voice activity detection through WASM.
-- Tempo/onset prototype from live audio novelty and BPM estimation.
-- Loudness prototype from live RMS level.
-
-## How to review the coach scaffold
-
-The coach app is a static browser scaffold for the eventual song-aware
-experience:
+In another terminal, install the demo requirements if needed:
 
 ```bash
-cd coach/web
-python3 -m http.server 8080
+python3 -m pip install -r server/technique/gt_singer_grader/requirements-demo.txt
 ```
 
-Open:
-
-```text
-http://127.0.0.1:8080
-```
-
-The coach scaffold shows the intended product direction: preset songs,
-recording flow, and report structure. The live detector outputs are not fully
-wired into this coach flow yet.
-
-## How to review Brady's technique prototype
-
-Brady's technique model is a separate PyTorch/upload demo on `origin/brady_dev`.
-To inspect it without modifying his branch, use a separate worktree:
+Then start the API:
 
 ```bash
-git fetch origin
-git worktree add ../NanoPitch-technique origin/brady_dev
-cd ../NanoPitch-technique
-pip install -r gt_singer_grader/requirements-demo.txt
-python -m gt_singer_grader.demo \
-  --checkpoint ./gt_singer_grader/models/technique_demo_best.pth \
-  --port 8765 \
-  --open-browser
+python3 server/technique/api.py --port 8765
 ```
 
-Open:
+Health check:
 
 ```text
-http://127.0.0.1:8765
+http://127.0.0.1:8765/health
 ```
 
-The technique prototype should be treated as research progress, not as a
-browser-integrated coach axis yet. It classifies GT Singer technique families
-and still needs validation before being used as a general singing-quality
-grader.
+If the technique API is offline, the browser still returns pitch, tempo, and
+dynamics. The technique card reports that the service is unavailable.
+
+## Axis details
+
+- **Pitch:** voiced percent, median f0, median note, pitch range, and
+  short-term stability.
+- **Tempo:** onset count, estimated BPM, BPM confidence, and onset spacing.
+- **Dynamics:** average level, peak level, p5/p95 loudness, and range used.
+- **Technique:** detected family, confidence, voiced percent, technique
+  strengths, and family probabilities from the GT Singer model.
 
 ## What is intentionally not done yet
 
-- Dynamics grading is not implemented. We have live loudness measurement, but
-  not a finished "dynamics" score.
-- Technique is not browser-native and is not merged into the live detector.
-- Tempo is detected live, but it is not yet scored against song JSON note
-  starts.
-- The coach UI exists as a scaffold; the detector page is still the best
-  working demo for the live axes.
+- This is not song grading yet. Pitch and tempo need a score/MIDI target.
+- Dynamics needs authored markings or a reference take before it can be judged.
+- Technique is PyTorch-backed through a local service, not browser-native.
+- The original detector probe remains useful for low-level debugging, but the
+  delivery app is now `coach/web/`.
 
 ## Next steps
 
-1. Wire NanoPitch pitch output into the coach report.
-2. Compare detected tempo/onsets against `start_beat` values in song JSON.
-3. Convert loudness into a real dynamics grade only after deciding the scoring
-   rule.
-4. Decide whether Technique should become browser-native via export or remain
-   a Python-backed service.
-5. Combine the axes into one report once the detectors are stable.
+1. Add song/reference mode so pitch and tempo can be scored against targets.
+2. Add reference-take comparison for dynamics.
+3. Decide whether technique stays as a Python service or moves to ONNX/WASM.
+4. Add saved report export once the report schema stabilizes.
