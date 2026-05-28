@@ -16,6 +16,12 @@ from .constants import DEFAULT_MAX_SECONDS, DEFAULT_N_MELS, FAMILY_NAMES, FRAME_
 from .features import load_wav_mono, log_mel_spectrogram
 from .feedback import summarize_prediction, summarize_segments, summary_to_json
 from .model import TechniqueGraderModel
+from .quality import (
+    QualityCalibrator,
+    load_quality_calibrator,
+    predict_quality_score,
+    resolve_default_quality_checkpoint,
+)
 
 TRAINING_DIR = Path(__file__).resolve().parents[1] / "training"
 if str(TRAINING_DIR) not in sys.path:
@@ -32,6 +38,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--nanopitch-vad-checkpoint", default=None)
     parser.add_argument("--disable-nanopitch-vad", action="store_true")
+    parser.add_argument("--quality-checkpoint", default=None)
+    parser.add_argument("--enable-vocalset-quality", action="store_true")
     parser.add_argument("--output-json", default=None)
     return parser.parse_args()
 
@@ -57,6 +65,9 @@ class LoadedPredictor:
     val_metrics: dict[str, float]
     nanopitch_vad_path: str | None = None
     nanopitch_vad_model: NanoPitch | None = None
+    quality_path: str | None = None
+    quality_model: QualityCalibrator | None = None
+    quality_metadata: dict[str, object] | None = None
 
 
 def resolve_default_nanopitch_vad_checkpoint() -> str | None:
@@ -89,6 +100,8 @@ def load_predictor(
     *,
     nanopitch_vad_checkpoint: str | None = None,
     use_nanopitch_vad: bool = True,
+    quality_checkpoint: str | None = None,
+    use_quality: bool = False,
 ) -> LoadedPredictor:
     device = choose_device(device_name)
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
@@ -109,6 +122,15 @@ def load_predictor(
     if nanopitch_vad_path is not None and os.path.exists(nanopitch_vad_path):
         nanopitch_vad_model = load_nanopitch_vad_model(nanopitch_vad_path, device)
 
+    quality_path = quality_checkpoint if use_quality else None
+    if use_quality and quality_path is None:
+        quality_path = resolve_default_quality_checkpoint()
+
+    quality_model = None
+    quality_metadata = None
+    if quality_path is not None and os.path.exists(quality_path):
+        quality_model, quality_metadata = load_quality_calibrator(quality_path, device)
+
     return LoadedPredictor(
         checkpoint_path=checkpoint_path,
         device=device,
@@ -119,6 +141,9 @@ def load_predictor(
         val_metrics=dict(checkpoint.get("val_metrics") or {}),
         nanopitch_vad_path=nanopitch_vad_path,
         nanopitch_vad_model=nanopitch_vad_model,
+        quality_path=quality_path,
+        quality_model=quality_model,
+        quality_metadata=quality_metadata,
     )
 
 
@@ -221,6 +246,15 @@ def predict_summary(
     summary = summarize_prediction(outputs, target_family=target_family)
     if include_segments:
         summary["segments"] = summarize_segments(outputs, target_family=target_family, frame_hop_seconds=FRAME_HOP_SECONDS)
+    if target_family is not None and predictor.quality_model is not None:
+        quality_score = predict_quality_score(predictor.quality_model, predictor.device, summary, target_family)
+        summary["vocalset_quality_score"] = quality_score
+        summary["vocalset_quality_percent"] = float(100.0 * quality_score)
+        for segment in summary.get("segments", []):
+            if isinstance(segment, dict):
+                segment_score = predict_quality_score(predictor.quality_model, predictor.device, segment, target_family)
+                segment["vocalset_quality_score"] = segment_score
+                segment["vocalset_quality_percent"] = float(100.0 * segment_score)
     return summary
 
 
@@ -231,6 +265,8 @@ def main() -> None:
         device_name=args.device,
         nanopitch_vad_checkpoint=args.nanopitch_vad_checkpoint,
         use_nanopitch_vad=not args.disable_nanopitch_vad,
+        quality_checkpoint=args.quality_checkpoint,
+        use_quality=args.enable_vocalset_quality,
     )
     summary = predict_summary(predictor, args.audio, target_family=args.target_family)
     text = summary_to_json(summary)

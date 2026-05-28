@@ -24,13 +24,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import torch
-from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from .constants import FAMILY_NAMES, PRIMARY_FAMILY_TO_TECHNIQUES, TECHNIQUE_FOLDER_TO_FAMILY
+from .constants import FAMILY_NAMES, TECHNIQUE_FOLDER_TO_FAMILY
 from .feedback import summarize_prediction
 from .infer import LoadedPredictor, load_predictor, predict_outputs, resolve_default_nanopitch_vad_checkpoint
+from .quality import QualityCalibrator, feature_vector
 
 
 VOCALSET_TECHNIQUE_TO_FAMILY = {
@@ -141,39 +141,6 @@ def split_records(records: list[VocalSetRecord], val_ratio: float, seed: int) ->
     return train, val
 
 
-def _feature_vector(summary: dict[str, object], target_family: str) -> list[float]:
-    family_probs = dict(summary["family_probabilities"])  # type: ignore[arg-type]
-    technique_scores = dict(summary["technique_scores"])  # type: ignore[arg-type]
-    target_keys = PRIMARY_FAMILY_TO_TECHNIQUES[target_family]
-
-    target_prob = float(family_probs.get(target_family, 0.0))
-    detected_conf = float(summary.get("detected_confidence", 0.0))
-    margin = float(summary.get("family_margin", 0.0))
-    voiced_ratio = float(summary.get("voiced_ratio", 0.0))
-
-    if target_family == "control":
-        target_strength = 1.0 - max(float(value) for value in technique_scores.values())
-        off_target = max(float(value) for value in technique_scores.values())
-    else:
-        target_strength = sum(float(technique_scores.get(key, 0.0)) for key in target_keys) / max(1, len(target_keys))
-        off_target_values = [float(value) for key, value in technique_scores.items() if key not in set(target_keys)]
-        off_target = sum(off_target_values) / max(1, len(off_target_values))
-
-    family_features = [float(family_probs.get(family, 0.0)) for family in FAMILY_NAMES]
-    technique_features = [float(technique_scores.get(key, 0.0)) for key in ("mix", "falsetto", "breathy", "pharyngeal", "glissando", "vibrato")]
-    return [
-        target_prob,
-        detected_conf,
-        margin,
-        voiced_ratio,
-        target_strength,
-        off_target,
-        target_strength - off_target,
-        *family_features,
-        *technique_features,
-    ]
-
-
 def build_feature_cache(
     predictor: LoadedPredictor,
     records: list[VocalSetRecord],
@@ -193,7 +160,7 @@ def build_feature_cache(
             writer.writerow(
                 {
                     **asdict(record),
-                    "features_json": json.dumps(_feature_vector(summary, record.family)),
+                    "features_json": json.dumps(feature_vector(summary, record.family)),
                 }
             )
 
@@ -227,22 +194,6 @@ class QualityFeatureDataset(Dataset):
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         features, target = self.examples[index]
         return torch.tensor(features, dtype=torch.float32), torch.tensor([target], dtype=torch.float32)
-
-
-class QualityCalibrator(nn.Module):
-    def __init__(self, input_size: int) -> None:
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_size, 64),
-            nn.GELU(),
-            nn.Dropout(0.15),
-            nn.Linear(64, 32),
-            nn.GELU(),
-            nn.Linear(32, 1),
-        )
-
-    def forward(self, features: torch.Tensor) -> torch.Tensor:
-        return self.net(features)
 
 
 def _read_feature_rows(path: str) -> list[dict[str, str]]:

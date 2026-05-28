@@ -1,8 +1,12 @@
 param(
+    [ValidateSet("gt_singer_only", "gt_singer_vocalset")]
+    [string]$ModelProfile = "gt_singer_only",
     [string]$Checkpoint = "",
+    [string]$QualityCheckpoint = "",
     [string]$BindHost = "127.0.0.1",
     [int]$Port = 8765,
     [string]$Device = "auto",
+    [switch]$DisableQuality,
     [switch]$NoBrowser
 )
 
@@ -37,6 +41,7 @@ $python = Resolve-PythonCommand
 
 $args = @(
     "-m", "gt_singer_grader.demo",
+    "--model-profile", $ModelProfile,
     "--host", $BindHost,
     "--port", $Port,
     "--device", $Device
@@ -44,6 +49,14 @@ $args = @(
 
 if ($Checkpoint) {
     $args += @("--checkpoint", $Checkpoint)
+}
+
+if ($QualityCheckpoint) {
+    $args += @("--quality-checkpoint", $QualityCheckpoint)
+}
+
+if ($DisableQuality) {
+    $args += "--disable-quality"
 }
 
 if (-not $NoBrowser) {

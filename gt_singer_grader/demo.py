@@ -25,7 +25,15 @@ from .infer import LoadedPredictor, load_predictor, predict_summary
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a local GT Singer technique-demo server")
+    parser.add_argument(
+        "--model-profile",
+        choices=("gt_singer_only", "gt_singer_vocalset"),
+        default="gt_singer_only",
+        help="Choose the packaged model folder to demo.",
+    )
     parser.add_argument("--checkpoint", default=None, help="Path to the checkpoint to load")
+    parser.add_argument("--quality-checkpoint", default=None, help="Path to a VocalSet quality calibrator checkpoint")
+    parser.add_argument("--disable-quality", action="store_true", help="Disable VocalSet quality scoring")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
@@ -36,8 +44,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def resolve_default_checkpoint() -> str:
+def resolve_default_checkpoint(model_profile: str = "gt_singer_only") -> str:
     root = Path(__file__).resolve().parent
+    profile_candidate = root / "models" / model_profile / "technique_demo_best.pth"
+    if profile_candidate.exists():
+        return str(profile_candidate)
+
     candidates = [
         root / "models" / "technique_demo_best.pth",
         root / "runs" / "exp2_detail" / "checkpoints" / "best.pth",
@@ -47,6 +59,13 @@ def resolve_default_checkpoint() -> str:
         if candidate.exists():
             return str(candidate)
     raise FileNotFoundError("no demo checkpoint found under gt_singer_grader/models or gt_singer_grader/runs")
+
+
+def resolve_profile_quality_checkpoint(model_profile: str) -> str | None:
+    if model_profile != "gt_singer_vocalset":
+        return None
+    candidate = Path(__file__).resolve().parent / "models" / "gt_singer_vocalset" / "vocalset_quality_best.pth"
+    return str(candidate) if candidate.exists() else None
 
 
 def _display_name(label: str) -> str:
@@ -102,6 +121,8 @@ def _render_timeline_segments(segments: list[dict[str, object]]) -> str:
         confidence = float(segment.get("detected_confidence", 0.0)) * 100.0
         grade = segment.get("grade")
         grade_text = "Detection only" if grade is None else f"{float(grade):.1f}/100"
+        quality = segment.get("vocalset_quality_percent")
+        quality_text = "" if quality is None else f"<span>VocalSet quality: {float(quality):.1f}%</span>"
         feedback = str(segment.get("feedback", ""))
         badge = str(segment.get("badge", "Section"))
         rows.append(
@@ -116,6 +137,7 @@ def _render_timeline_segments(segments: list[dict[str, object]]) -> str:
                 <div class="timeline-metrics">
                   <span>Score: {html.escape(grade_text)}</span>
                   <span>Confidence: {confidence:.1f}%</span>
+                  {quality_text}
                 </div>
                 <p>{html.escape(feedback)}</p>
               </div>
@@ -156,6 +178,8 @@ def _render_results(filename: str, summary: dict[str, object], assessment: dict[
         stats.append(("Technique grade", f"{float(assessment['grade']):.1f}/100"))
         stats.append(("Target strength", f"{float(assessment['target_strength']) * 100.0:.1f}%"))
         stats.append(("Off-target", f"{float(assessment['off_target_strength']) * 100.0:.1f}%"))
+    if "vocalset_quality_percent" in summary:
+        stats.append(("VocalSet quality", f"{float(summary['vocalset_quality_percent']):.1f}%"))
 
     stat_cards = "".join(
         f"""
@@ -235,6 +259,10 @@ def _render_page(
         metric_chips.append('<span class="chip">VAD: NanoPitch</span>')
     else:
         metric_chips.append('<span class="chip">VAD: Technique model</span>')
+    if val_metrics.get("_vocalset_quality_active"):
+        metric_chips.append('<span class="chip">Quality: VocalSet</span>')
+    else:
+        metric_chips.append('<span class="chip">Quality: GT Singer grade</span>')
 
     return f"""<!doctype html>
 <html lang="en">
@@ -916,14 +944,19 @@ class DemoHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     args = parse_args()
-    checkpoint_path = args.checkpoint or resolve_default_checkpoint()
+    checkpoint_path = args.checkpoint or resolve_default_checkpoint(args.model_profile)
+    quality_checkpoint = args.quality_checkpoint or resolve_profile_quality_checkpoint(args.model_profile)
+    use_quality = not args.disable_quality and quality_checkpoint is not None
     predictor = load_predictor(
         checkpoint_path,
         device_name=args.device,
         nanopitch_vad_checkpoint=args.nanopitch_vad_checkpoint,
         use_nanopitch_vad=not args.disable_nanopitch_vad,
+        quality_checkpoint=quality_checkpoint,
+        use_quality=use_quality,
     )
     predictor.val_metrics["_nanopitch_vad_active"] = predictor.nanopitch_vad_model is not None
+    predictor.val_metrics["_vocalset_quality_active"] = predictor.quality_model is not None
     state = DemoState(
         predictor=predictor,
         max_upload_bytes=max(1, args.max_upload_mb) * 1024 * 1024,
@@ -932,11 +965,14 @@ def main() -> None:
     server = DemoServer((args.host, args.port), state)
     url = f"http://{args.host}:{args.port}"
     print(f"Serving GT Singer demo at {url}")
+    print(f"Model profile: {args.model_profile}")
     print(f"Loaded checkpoint: {checkpoint_path}")
     if predictor.nanopitch_vad_model is not None:
         print(f"Using NanoPitch VAD: {predictor.nanopitch_vad_path}")
     else:
         print("Using technique model VAD")
+    if predictor.quality_model is not None:
+        print(f"Using VocalSet quality calibrator: {predictor.quality_path}")
     if args.open_browser:
         webbrowser.open(url)
     try:

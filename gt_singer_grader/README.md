@@ -14,7 +14,10 @@ The first version is a technique grader, not a generic "good singer / bad singer
 - frame-level VAD
 - frame-level technique activity for `mix`, `falsetto`, `breathy`, `pharyngeal`, `glissando`, `vibrato`
 
-That gives us a solid base for later quality grading. Once you add your own good/bad labels, we can hang a separate quality head off the same clip embedding without rewriting the whole pipeline.
+The packaged demo now has two separate model profiles:
+
+- `gt_singer_only`: GT Singer technique recognition and segment feedback.
+- `gt_singer_vocalset`: the same GT Singer technique recognizer plus a VocalSet weakly supervised execution-quality calibrator.
 
 ## Expected dataset layout
 
@@ -117,7 +120,7 @@ If `--target-family` is set, the script also emits:
 The packaged browser demo does not require the GT Singer dataset. It only needs:
 
 - the `gt_singer_grader` code
-- the packaged checkpoint at `gt_singer_grader/models/technique_demo_best.pth`
+- one of the packaged model folders under `gt_singer_grader/models/`
 - Python with `numpy` and `torch`
 
 For a fresh environment:
@@ -129,7 +132,16 @@ pip install -r gt_singer_grader/requirements-demo.txt
 ```bash
 cd NanoPitch
 python -m gt_singer_grader.demo \
-  --checkpoint ./gt_singer_grader/models/technique_demo_best.pth \
+  --model-profile gt_singer_only \
+  --port 8765 \
+  --open-browser
+```
+
+To demo the VocalSet-added quality model:
+
+```bash
+python -m gt_singer_grader.demo \
+  --model-profile gt_singer_vocalset \
   --port 8765 \
   --open-browser
 ```
@@ -140,6 +152,12 @@ On Windows, the easier launcher is:
 
 ```powershell
 .\gt_singer_grader\launch_demo.ps1
+```
+
+or with the VocalSet quality calibrator:
+
+```powershell
+.\gt_singer_grader\launch_demo.ps1 -ModelProfile gt_singer_vocalset
 ```
 
 or double-click:
@@ -164,10 +182,13 @@ technique, and returns:
 - a `well done / developing / needs work / uncertain` verdict
 - short feedback text
 - clip-level and frame-level score breakdowns
+- section-by-section timeline feedback
+- VocalSet quality score when `gt_singer_vocalset` is selected and an intended technique is chosen
 
 ## Notes
 
 - `Paired_Speech_Group` is skipped by default for now.
 - Validation splits are grouped by `speaker + parent technique folder + song` so control, mixed-voice, and falsetto takes from the same song stay together and do not leak across train/val.
 - Audio loading uses only Python stdlib + PyTorch, so there are no new heavy dependencies beyond the repo's existing stack.
-- The packaged demo checkpoint lives at `gt_singer_grader/models/technique_demo_best.pth`.
+- The GT Singer-only package lives at `gt_singer_grader/models/gt_singer_only/`.
+- The GT Singer + VocalSet package lives at `gt_singer_grader/models/gt_singer_vocalset/`.
