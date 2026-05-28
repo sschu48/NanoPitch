@@ -7,6 +7,7 @@ __pycache__/
 
 # macOS / editor noise
 .DS_Store
+.claude/
 
 # venv + tooling
 .venv/
@@ -14,14 +15,13 @@ __pycache__/
 uv.lock
 
 # training outputs — heavy artifacts ignored, small evidence files tracked
+# The packaged technique checkpoint and deployment/web/model.json are tracked
+# intentionally for the submitted demo.
 *.pth
 *.ckpt
 training/runs/**/checkpoints/
 training/runs/**/tb/
 training/runs/**/model.json
-
-# stray browser-test export
-deployment/web/model.json
 
 # log files
 logs/

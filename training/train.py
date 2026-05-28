@@ -8,10 +8,9 @@ activity in noisy conditions. Here's what happens during training:
 1. LOAD DATA: Pre-extracted mel spectrograms of clean vocals (with
    ground-truth pitch from RMVPE) and environmental noise.
 
-2. AUGMENT: Implemented in ``augment_mel_batch`` (a stub you must fill in).
-   The intended behavior is to mix each clean vocal window with a random
+2. AUGMENT: ``augment_mel_batch`` mixes each clean vocal window with a random
    noise window at a random SNR so the model sees noisy conditions during
-   training. Until you implement it, training uses clean mel only.
+   training.
 
 3. PREDICT: Feed the noisy mel spectrogram to the model. It outputs
    VAD probabilities and a pitch posteriorgram.
@@ -95,7 +94,7 @@ parser.add_argument("--seq-len", type=int, default=200,
 parser.add_argument("--num-workers", type=int, default=0,
                     help="data loading threads (0 = main thread only)")
 
-# Data augmentation (used by augment_mel_batch once implemented)
+# Data augmentation
 parser.add_argument("--snr-range", type=float, nargs=2, default=[-5.0, 20.0],
                     help="min/max SNR in dB for noise mixing (see augment_mel_batch)")
 
@@ -117,8 +116,7 @@ class NanoPitchDataset(Dataset):
     """PyTorch Dataset that serves (clean_mel, noise_mel, vad, pitch) tuples.
 
     Noise mixing is applied in ``augment_mel_batch`` in the training loop,
-    not here — so each epoch can see different random mixtures once that
-    function is implemented.
+    not here, so each epoch can see different random mixtures.
     """
 
     def __init__(self, data_dir, seq_len=200):
@@ -233,7 +231,7 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, writer,
             pg = f0_to_posteriorgram(f0_np[b], n_frames=T)
             pitch_target[b] = torch.from_numpy(pg)
 
-        # ── Data augmentation (implement in augment_mel_batch) ──
+        # ── Data augmentation ──
         mel_mix = augment_mel_batch(mel_clean, mel_noise, args.snr_range, device)
 
         # ── Forward Pass ──
@@ -442,10 +440,10 @@ def main():
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr,
                                    betas=(0.8, 0.98), eps=1e-8)
 
-    # Learning rate scheduler — student exercise.
+    # Learning rate scheduler.
     #
-    # The stub below holds the learning rate constant throughout training.
-    # Replace it with a real schedule to improve convergence — for example:
+    # The default below holds the learning rate constant throughout training.
+    # Replace it with a real schedule when experimenting with convergence:
     #
     #   Cosine annealing with warm restarts (Loshchilov & Hutter, 2017):
     #     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
@@ -458,7 +456,7 @@ def main():
     # Call scheduler.step() once per batch (inside train_one_epoch) or once
     # per epoch (here, after train_one_epoch returns), depending on the type.
     scheduler = torch.optim.lr_scheduler.LambdaLR(
-        optimizer, lr_lambda=lambda step: 1.0)  # constant LR — replace me
+        optimizer, lr_lambda=lambda step: 1.0)  # constant LR baseline
 
     # TensorBoard writer for visualizing training progress
     writer = SummaryWriter(log_dir=os.path.join(output_dir, "tb"))

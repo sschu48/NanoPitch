@@ -40,15 +40,15 @@ Each `.wav` is paired with the GT Singer `.json` alignment file in the same fold
 ## Download
 
 ```bash
-cd NanoPitch
-python -m gt_singer_grader.download_dataset --output-dir ./gt_singer_grader/data/GTSinger
+cd NanoPitch/server/technique
+python3 -m gt_singer_grader.download_dataset --output-dir ./gt_singer_grader/data/GTSinger
 ```
 
 ## Train
 
 ```bash
-cd NanoPitch
-python -m gt_singer_grader.train \
+cd NanoPitch/server/technique
+python3 -m gt_singer_grader.train \
   --dataset-root ./gt_singer_grader/data/GTSinger \
   --output-dir ./gt_singer_grader/runs/exp1 \
   --epochs 20 \
@@ -65,8 +65,8 @@ Useful outputs:
 ## Inference
 
 ```bash
-cd NanoPitch
-python -m gt_singer_grader.infer \
+cd NanoPitch/server/technique
+python3 -m gt_singer_grader.infer \
   --checkpoint ./gt_singer_grader/runs/exp1/checkpoints/best.pth \
   --audio path/to/sample.wav \
   --target-family vibrato
@@ -90,12 +90,12 @@ The packaged browser demo does not require the GT Singer dataset. It only needs:
 For a fresh environment:
 
 ```bash
-pip install -r gt_singer_grader/requirements-demo.txt
+cd NanoPitch/server/technique
+python3 -m pip install -r gt_singer_grader/requirements-demo.txt
 ```
 
 ```bash
-cd NanoPitch
-python -m gt_singer_grader.demo \
+python3 -m gt_singer_grader.demo \
   --checkpoint ./gt_singer_grader/models/technique_demo_best.pth \
   --port 8765 \
   --open-browser

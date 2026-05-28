@@ -1,12 +1,13 @@
 # NanoPitch Coach (Project 2)
 
-A browser-based singing coach. Pick a pre-loaded song, sing along to a
-metronome, and get a per-axis report after the take.
+A browser-based singing coach roadmap. The submitted Project 2 app currently
+records a free take and returns a per-axis detection report after the take.
 
 Pitch detection comes from the NanoPitch model trained in project 1
-(`training/runs/v1_aug/`). The current Project 2 snapshot adds live tempo
-and loudness prototypes alongside it. Technique remains a separate prototype
-on Brady's branch, and dynamics grading is still future work.
+(`training/runs/v1_aug/`). The current Project 2 snapshot adds browser tempo
+and dynamics detection alongside it. Technique is available through the
+optional local API under `server/technique/`. Song/reference grading is still
+future work.
 
 ## The four axes
 
@@ -90,9 +91,9 @@ JSON so they can vary per song.
 | Phase | Scope | Estimate | Status |
 |---|---|---|---|
 | **v1** | Pitch — score-match grading. Metronome, piano-roll, post-record report. | ~1 week | In progress |
-| v2 | Tempo — DSP onset detection vs. score onsets. | ~few days | Live detector prototype |
-| v3 | Dynamics — RMS curve + range-used grade. | ~1–2 days | Loudness signal live; grading not implemented |
-| v4 | Technique — classifier trained on GTSinger; healthiness grade from physiology. | **2–4 weeks** (ML risk) | Separate Brady prototype |
+| v2 | Tempo — DSP onset detection vs. score onsets. | ~few days | Free-take detection implemented; score grading future |
+| v3 | Dynamics — RMS curve + range-used grade. | ~1–2 days | Free-take detection implemented; authored-target grading future |
+| v4 | Technique — classifier trained on GTSinger; healthiness grade from physiology. | **2–4 weeks** (ML risk) | Optional local API integrated |
 | v5 | Reference-derived targets — record a pro take per song; run detectors; promote to reference-match grading. | ~few days once detectors work | Future |
 | v6 | Upload your own MIDI; key transposition; free-pace recording with DTW. | Future | Future |
 
@@ -182,9 +183,9 @@ in-tune score.
 
 ## Future axes — implementation notes
 
-These are sketches to keep v1 honest about where the project is heading.
-The live browser detector has tempo and loudness prototypes, but the coach
-UI has not consumed them yet.
+These are sketches for the score-matched version of the coach. The submitted
+UI already consumes tempo and loudness as free-take detection axes, but it does
+not yet compare them against per-song targets.
 
 ### Tempo (v2)
 - **Reference** per note: `t_ref = start_beat × 60 / bpm` (seconds
