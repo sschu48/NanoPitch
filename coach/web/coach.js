@@ -27,6 +27,8 @@ const state = {
   resampleBuf: new Float32Array(0),
   recordedChunks: [],
   liveFrames: [],
+  timelineFrames: [],
+  timelineOnsets: [],
 
   takeUrl: null,
   takeBlob: null,
@@ -168,6 +170,8 @@ async function startRecording() {
   state.recording = true;
   state.recordedChunks = [];
   state.liveFrames = [];
+  state.timelineFrames = [];
+  state.timelineOnsets = [];
   state.resampleBuf = new Float32Array(0);
   state.report = null;
   clearTakeUrl();
@@ -217,6 +221,8 @@ function handleAudioProcess(event) {
     const frame = processAudioFrame(samples, timeS);
     if (frame) state.liveFrames.push(frame);
     if (state.liveFrames.length > 900) state.liveFrames.shift();
+    state.timelineFrames = state.liveFrames;
+    state.timelineOnsets = [];
 
     if (state.liveFrames.length % 3 === 0) {
       updateLiveMeters(frame);
@@ -246,9 +252,12 @@ async function stopRecording() {
 
   const frames = await analyzePcmTake(pcm);
   let report = NanoPitchAnalyzer.buildLocalReport({ frames, duration_s: durationS });
+  const tempoOnsets = report.axes.find(axis => axis.axis === 'tempo')?.timeline || [];
+  state.timelineFrames = frames;
+  state.timelineOnsets = tempoOnsets;
   state.report = report;
   renderReport(report, { techniquePending: true });
-  drawTimeline(frames, report.axes.find(axis => axis.axis === 'tempo')?.timeline || []);
+  drawTimeline(frames, tempoOnsets);
 
   const techniquePayload = await analyzeTechnique(state.takeBlob);
   report = NanoPitchAnalyzer.addTechniqueAxis(report, techniquePayload);
@@ -454,16 +463,6 @@ function drawTimeline(frames, onsets = []) {
   const plotW = width - padL - padR;
   const plotH = height - padT - padB;
 
-  ctx.strokeStyle = '#2c2c2c';
-  ctx.lineWidth = ratio;
-  for (let i = 0; i <= 4; i++) {
-    const y = padT + (plotH * i) / 4;
-    ctx.beginPath();
-    ctx.moveTo(padL, y);
-    ctx.lineTo(width - padR, y);
-    ctx.stroke();
-  }
-
   if (!frames.length) {
     ctx.fillStyle = '#8d8a82';
     ctx.font = `${12 * ratio}px system-ui`;
@@ -471,63 +470,186 @@ function drawTimeline(frames, onsets = []) {
     return;
   }
 
-  const voiced = frames.filter(frame => frame.voiced && frame.f0_hz > 0);
-  const midis = voiced.map(frame => NanoPitchAnalyzer.hzToMidi(frame.f0_hz));
-  const minMidi = Math.floor(Math.min(...midis, 48) - 2);
-  const maxMidi = Math.ceil(Math.max(...midis, 72) + 2);
   const duration = Math.max(frames[frames.length - 1].time_s, 1);
+  const windowRange = activeTimelineWindow(frames, duration);
+  const visibleFrames = frames.filter(frame =>
+    frame.time_s >= windowRange.start && frame.time_s <= windowRange.end);
+  const visibleOnsets = onsets.filter(onset =>
+    onset.time_s >= windowRange.start && onset.time_s <= windowRange.end);
+  const viewDuration = Math.max(0.2, windowRange.end - windowRange.start);
 
-  const xFor = time => padL + (time / duration) * plotW;
-  const yPitch = midi => padT + (1 - (midi - minMidi) / Math.max(1, maxMidi - minMidi)) * (plotH * 0.68);
-  const yDb = db => padT + plotH * 0.72 + (1 - ((Math.max(-70, Math.min(0, db)) + 70) / 70)) * (plotH * 0.24);
+  const laneGap = 22 * ratio;
+  const laneH = (plotH - laneGap) / 2;
+  const pitchLane = { y: padT, h: laneH };
+  const levelLane = { y: padT + laneH + laneGap, h: laneH };
 
+  drawLaneGrid(ctx, padL, width - padR, pitchLane, ratio);
+  drawLaneGrid(ctx, padL, width - padR, levelLane, ratio);
+
+  const pitchMidis = visibleFrames
+    .filter(frame => isPitchDisplayFrame(frame))
+    .map(frame => NanoPitchAnalyzer.hzToMidi(frame.f0_hz))
+    .filter(Number.isFinite);
+  const pitchScale = scaleFromValues(pitchMidis, 4, 48, 84);
+
+  const dbValues = visibleFrames
+    .map(frame => frame.rms_db)
+    .filter(value => Number.isFinite(value));
+  const dbScale = scaleFromValues(dbValues, 10, -80, 0);
+
+  const xFor = time => padL + ((time - windowRange.start) / viewDuration) * plotW;
+  const yPitch = midi => pitchLane.y + (1 - normalize(midi, pitchScale.min, pitchScale.max)) * pitchLane.h;
+  const yDb = db => levelLane.y + (1 - normalize(db, dbScale.min, dbScale.max)) * levelLane.h;
+
+  ctx.strokeStyle = '#e05d43';
+  ctx.lineWidth = ratio;
+  ctx.globalAlpha = 0.65;
+  for (const onset of visibleOnsets) {
+    const x = xFor(onset.time_s);
+    ctx.beginPath();
+    ctx.moveTo(x, pitchLane.y);
+    ctx.lineTo(x, levelLane.y + levelLane.h);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  drawPitchTrace(ctx, visibleFrames, xFor, yPitch, ratio);
+  drawLevelTrace(ctx, visibleFrames, xFor, yDb, ratio);
+
+  ctx.fillStyle = '#d8d3c8';
+  ctx.font = `${11 * ratio}px system-ui`;
+  ctx.fillText('pitch', 8 * ratio, pitchLane.y + 14 * ratio);
+  ctx.fillText('level', 8 * ratio, levelLane.y + 14 * ratio);
+  ctx.fillStyle = '#8d8a82';
+  const rangeLabel = windowRange.cropped
+    ? `${viewDuration.toFixed(1)}s shown / ${duration.toFixed(1)}s take`
+    : `${duration.toFixed(1)}s`;
+  ctx.fillText(rangeLabel, width - padR - ctx.measureText(rangeLabel).width, height - 8 * ratio);
+}
+
+function activeTimelineWindow(frames, duration) {
+  const active = frames.filter(frame =>
+    frame && (
+      frame.voiced ||
+      frame.vad > 0.16 ||
+      frame.f0_hz > 0 ||
+      frame.rms_db > -55
+    ));
+
+  if (!active.length) {
+    return { start: 0, end: duration, cropped: false };
+  }
+
+  let start = Math.max(0, active[0].time_s - 0.75);
+  let end = Math.min(duration, active[active.length - 1].time_s + 0.75);
+  if (end - start < 2) {
+    const mid = (start + end) / 2;
+    start = Math.max(0, mid - 1);
+    end = Math.min(duration, mid + 1);
+  }
+  const cropped = start > 0.05 || end < duration - 0.05;
+  return { start, end, cropped };
+}
+
+function isPitchDisplayFrame(frame) {
+  return frame && frame.f0_hz > 0 && (frame.voiced || frame.vad > 0.12);
+}
+
+function drawLaneGrid(ctx, x0, x1, lane, ratio) {
+  ctx.strokeStyle = '#2c2c2c';
+  ctx.lineWidth = ratio;
+  for (let i = 0; i <= 3; i++) {
+    const y = lane.y + (lane.h * i) / 3;
+    ctx.beginPath();
+    ctx.moveTo(x0, y);
+    ctx.lineTo(x1, y);
+    ctx.stroke();
+  }
+}
+
+function drawPitchTrace(ctx, frames, xFor, yPitch, ratio) {
   ctx.strokeStyle = '#67d5b5';
-  ctx.lineWidth = 2 * ratio;
+  ctx.lineWidth = 2.4 * ratio;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
   ctx.beginPath();
   let started = false;
+  let lastTime = null;
+  let smoothedMidi = null;
   for (const frame of frames) {
-    if (!frame.voiced || !(frame.f0_hz > 0)) {
-      started = false;
+    if (!isPitchDisplayFrame(frame)) {
       continue;
     }
+    const gap = lastTime == null ? 0 : frame.time_s - lastTime;
+    const midi = NanoPitchAnalyzer.hzToMidi(frame.f0_hz);
+    if (smoothedMidi == null || gap > 0.28 || Math.abs(midi - smoothedMidi) > 8) {
+      smoothedMidi = midi;
+    } else {
+      smoothedMidi = 0.35 * midi + 0.65 * smoothedMidi;
+    }
     const x = xFor(frame.time_s);
-    const y = yPitch(NanoPitchAnalyzer.hzToMidi(frame.f0_hz));
-    if (!started) {
+    const y = yPitch(smoothedMidi);
+    if (!started || gap > 0.28) {
       ctx.moveTo(x, y);
       started = true;
     } else {
       ctx.lineTo(x, y);
     }
+    lastTime = frame.time_s;
   }
   ctx.stroke();
+}
 
+function drawLevelTrace(ctx, frames, xFor, yDb, ratio) {
   ctx.strokeStyle = '#e3b04b';
-  ctx.lineWidth = 1.5 * ratio;
+  ctx.lineWidth = 2 * ratio;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
   ctx.beginPath();
-  frames.forEach((frame, index) => {
+  let started = false;
+  let smoothedDb = null;
+  for (const frame of frames) {
+    if (!Number.isFinite(frame.rms_db)) continue;
+    smoothedDb = smoothedDb == null
+      ? frame.rms_db
+      : 0.18 * frame.rms_db + 0.82 * smoothedDb;
     const x = xFor(frame.time_s);
-    const y = yDb(frame.rms_db);
-    if (index === 0) ctx.moveTo(x, y);
+    const y = yDb(smoothedDb);
+    if (!started) {
+      ctx.moveTo(x, y);
+      started = true;
+    }
     else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
-
-  ctx.strokeStyle = '#e05d43';
-  ctx.lineWidth = ratio;
-  for (const onset of onsets) {
-    const x = xFor(onset.time_s);
-    ctx.beginPath();
-    ctx.moveTo(x, padT);
-    ctx.lineTo(x, height - padB);
-    ctx.stroke();
   }
+  ctx.stroke();
+}
 
-  ctx.fillStyle = '#d8d3c8';
-  ctx.font = `${11 * ratio}px system-ui`;
-  ctx.fillText('pitch', 8 * ratio, padT + 12 * ratio);
-  ctx.fillText('level', 8 * ratio, padT + plotH * 0.82);
-  ctx.fillStyle = '#8d8a82';
-  ctx.fillText(`${duration.toFixed(1)}s`, width - padR - 34 * ratio, height - 8 * ratio);
+function scaleFromValues(values, minSpan, fallbackMin, fallbackMax) {
+  const finite = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!finite.length) return { min: fallbackMin, max: fallbackMax };
+
+  let min = quantileSorted(finite, 0.05);
+  let max = quantileSorted(finite, 0.95);
+  if (max - min < minSpan) {
+    const mid = (min + max) / 2;
+    min = mid - minSpan / 2;
+    max = mid + minSpan / 2;
+  }
+  const pad = (max - min) * 0.15;
+  return {
+    min: Math.max(fallbackMin, min - pad),
+    max: Math.min(fallbackMax, max + pad),
+  };
+}
+
+function quantileSorted(sortedValues, p) {
+  const idx = Math.max(0, Math.min(sortedValues.length - 1, Math.round(p * (sortedValues.length - 1))));
+  return sortedValues[idx];
+}
+
+function normalize(value, min, max) {
+  if (max <= min) return 0.5;
+  return Math.max(0, Math.min(1, (value - min) / (max - min)));
 }
 
 async function refreshTechniqueHealth() {
@@ -549,7 +671,7 @@ window.addEventListener('DOMContentLoaded', () => {
     else startRecording();
   });
   $('refresh-technique').addEventListener('click', refreshTechniqueHealth);
-  window.addEventListener('resize', () => drawTimeline(state.liveFrames));
+  window.addEventListener('resize', () => drawTimeline(state.timelineFrames, state.timelineOnsets));
 
   renderReport(null);
   drawTimeline([]);
