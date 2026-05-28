@@ -13,13 +13,17 @@ See [COACH.md](COACH.md) for the longer four-axis roadmap.
 ## Run the browser app
 
 The browser app is static. It loads NanoPitch WASM/model assets from
-`deployment/web`.
+`deployment/web`, so serve the repository root rather than `coach/web` or
+`deployment/web` directly.
 
 ```bash
 # from repo root
 python3 -m http.server 8080
 # open http://127.0.0.1:8080/coach/web/
 ```
+
+If you serve from `deployment/web`, you will see the lower-level NanoPitch
+detector/debug page instead of the Project 2 coach submission UI.
 
 ## Run the optional technique API
 

@@ -2,9 +2,46 @@
 
 Train a neural network that tracks pitch and detects singing in real-time on your laptop, then deploy it to run live in a web browser.
 
+## Start Here: Project 2 Coach Submission
+
+The Project 2 submission UI is the coach app in `coach/web/`, not the lower
+level detector page in `deployment/web/`.
+
+Run from the repo root:
+
+```bash
+python3 -m http.server 8080
+```
+
+Open:
+
+```text
+http://127.0.0.1:8080/coach/web/
+```
+
+The app records one free take, analyzes that same recorded WAV, and shows a
+unified detection report for pitch, tempo, dynamics, and optional technique.
+
+Optional technique service:
+
+```bash
+python3 server/technique/api.py --port 8765
+```
+
+If you instead run this command from `deployment/web/`:
+
+```bash
+cd deployment/web
+python3 -m http.server 8080
+```
+
+you will see the lower-level live detector/debug page. That page is still
+useful for inspecting NanoPitch internals, but it is not the polished Project 2
+coach submission interface.
+
 ## Project 2 Final MVP
 
-For the Project 2 final MVP branch, start here:
+For the full Project 2 final MVP status, start here:
 [PROJECT2_SUBMISSION.md](PROJECT2_SUBMISSION.md).
 
 This branch presents the project as a free-take singing analysis dashboard:
@@ -16,8 +53,8 @@ This branch presents the project as a free-take singing analysis dashboard:
 - The report is detection-first. It does not claim a grade unless a future
   score, reference take, or intended technique target is provided.
 
-Serve the repo root and open `/coach/web/`. Run the optional technique service
-with `python3 server/technique/api.py --port 8765`.
+Serve the repo root and open `/coach/web/`. See `coach/README.md` for the
+short run guide.
 
 ## What You'll Learn
 

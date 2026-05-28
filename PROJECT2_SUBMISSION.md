@@ -53,6 +53,10 @@ http://127.0.0.1:8080/coach/web/
 The app loads `../../deployment/web/model.json` automatically. Record a take,
 stop recording, and the app analyzes the recorded 16 kHz WAV.
 
+Do not start this app from `deployment/web/` if you want the submission UI.
+Serving `deployment/web/` directly opens the lower-level live detector/debug
+page, not the Project 2 coach dashboard.
+
 ## How to run the technique API
 
 In another terminal, install the demo requirements if needed:
