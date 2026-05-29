@@ -28,6 +28,12 @@ Optional later:
 python3 -m pip install -r server/technique/gt_singer_grader/requirements-demo.txt
 ```
 
+- Technique-model training dependencies:
+
+```bash
+python3 -m pip install -r server/technique/gt_singer_grader/requirements-training.txt
+```
+
 - Full NanoPitch training dependencies:
 
 ```bash
@@ -47,6 +53,7 @@ This runs:
 - Python syntax checks for the technique API and grader modules
 - JavaScript syntax checks for the coach browser app
 - stdlib-only unit tests for manifest tooling
+- dataset registry strategy audit
 - app-recordings CSV -> normalized JSONL manifest smoke test
 - JSONL manifest validation
 
@@ -55,29 +62,37 @@ This runs:
 1. `MODEL_DEVELOPMENT.md` for the goal, data strategy, training stages, and
    evaluation gates.
 2. `dataset_registry.json` for candidate datasets and their role in the plan.
-3. `manifest.py` for the normalized manifest contract.
-4. `build_manifest.py` for currently supported manifest builders.
-5. `train.py` for the current GT Singer training loop.
-6. `feedback.py` and `server/technique/api.py` for inference-time output shape.
+3. `EXPERIMENTS.md` for the first baseline run, follow-on dataset plan, and
+   run-tracking expectations.
+4. `APP_RECORDING_LABELING.md` for target-domain reviewer labels.
+5. `manifest.py` for the normalized manifest contract.
+6. `build_manifest.py` for currently supported manifest builders.
+7. `train.py` for the current GT Singer training loop.
+8. `feedback.py` and `server/technique/api.py` for inference-time output shape.
+
+Audit dataset expansion decisions with:
+
+```bash
+cd server/technique
+python3 -m gt_singer_grader.dataset_strategy --strict
+```
 
 ## Working Without Datasets
 
-Use the app-recording label template to test manifest plumbing:
+Use the app-recording review fixture to test manifest plumbing:
 
 ```bash
 cd server/technique
 python3 -m gt_singer_grader.build_manifest app-recordings \
-  --csv gt_singer_grader/app_recordings_labels_template.csv \
+  --csv gt_singer_grader/tests/fixtures/app_recordings_review_smoke.csv \
   --output /tmp/nanopitch-technique/app_recordings_manifest.jsonl
 
 python3 -m gt_singer_grader.manifest /tmp/nanopitch-technique/app_recordings_manifest.jsonl
 ```
 
-The CSV columns are:
-
-```text
-audio_path,recording_id,singer_id,song_id,families,techniques,split_group,label_source,notes
-```
+For real app recordings, start from `app_recordings_review_template.csv` or run
+`python3 -m gt_singer_grader.prepare_app_recordings` against collected WAVs to
+create `gt_singer_grader/data/app_recordings/review_labels.csv`.
 
 ## Running The Existing Demo Later
 
@@ -108,13 +123,43 @@ validation and user-recording augmentation:
 
 ```bash
 cd server/technique
+python3 -m pip install -r gt_singer_grader/requirements-training.txt
+python3 -m gt_singer_grader.download_dataset \
+  --output-dir ./gt_singer_grader/data/GTSinger \
+  --language English
+```
+
+```bash
+cd server/technique
+python3 -m gt_singer_grader.preflight
+```
+
+The preflight report includes a `next_steps` list with required install and
+download commands that still apply to the local machine. It also reports
+app-label collection and release-readiness warnings, such as stale packaged
+checkpoint metadata, under `optional_next_steps`.
+
+To summarize the whole experiment sequence from the current artifact state:
+
+```bash
+cd server/technique
+python3 -m gt_singer_grader.experiment_status
+```
+
+Use this after each train/evaluate/compare step to see the next command and the
+remaining evidence gap.
+
+```bash
+cd server/technique
 python3 -m gt_singer_grader.train \
   --dataset-root ./gt_singer_grader/data/GTSinger \
-  --output-dir ./gt_singer_grader/runs/gtsinger_speaker_aug_v1 \
-  --split-group speaker \
+  --output-dir ./gt_singer_grader/runs/gtsinger_song_aug_v1 \
+  --training-plan ./gt_singer_grader/runs/gtsinger_song_aug_v1/training_plan.json \
+  --split-group song \
   --user-audio-augmentation \
   --epochs 50 \
-  --batch-size 8
+  --batch-size 8 \
+  --quiet
 ```
 
 Do not treat random clip-level validation as product evidence. For user-uploaded
@@ -126,5 +171,7 @@ recordings, speaker-held-out and app-recording validation are required.
 - PyTorch is optional for light dev and is not required for the first checks.
 - Real app-style labeled recordings still need to be collected.
 - The current checkpoint is demo-grade, trained on clean GT Singer English data.
-- Future work should add dataset-specific builders for VocalSet/CVT/SVQTD only
-  after license/taxonomy review.
+- VocalSet has a conservative manifest builder, but raw VocalSet data is not
+  present locally and the supplemental run should wait until the GT Singer
+  baseline has metrics.
+- CVT/SVQTD remain later candidates after license/taxonomy review.

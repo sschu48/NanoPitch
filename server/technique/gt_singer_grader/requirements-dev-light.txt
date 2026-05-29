@@ -4,6 +4,7 @@
 #
 #   make technique-check-light
 #
-# Install gt_singer_grader/requirements-demo.txt only when running PyTorch
-# inference/training, and install the root requirements.txt only for full
-# NanoPitch training work.
+# Install gt_singer_grader/requirements-demo.txt only for packaged checkpoint
+# inference, install gt_singer_grader/requirements-training.txt for technique
+# model training, and install the root requirements.txt only for full NanoPitch
+# pitch/VAD training work.

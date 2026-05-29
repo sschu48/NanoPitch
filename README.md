@@ -35,11 +35,13 @@ http://127.0.0.1:8080/coach/web/
 Optional technique service:
 
 ```bash
-python3 server/technique/api.py --port 8765
+make technique-api
 ```
 
-If the technique API is not running, the browser app still reports pitch,
-tempo, and dynamics.
+With the technique service running, the same recorded WAV produces four report
+cards: pitch, tempo, dynamics, and technique. If the technique API is not
+running or times out, the browser app still completes the report and marks the
+technique axis unavailable.
 
 ## What The App Reports
 

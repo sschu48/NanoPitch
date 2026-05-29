@@ -19,7 +19,7 @@
     "label_fit": "Useful controlled vocal techniques and exercises.",
     "main_gap": "Professional/controlled singers and exercises, not user-uploaded songs.",
     "source_url": "https://zenodo.org/records/1442513",
-    "acquisition": "manual_download"
+    "acquisition": "manual_download_then_python3 -m gt_singer_grader.build_manifest vocalset --root ./gt_singer_grader/data/VocalSet --output ./gt_singer_grader/manifests/vocalset.jsonl"
   },
   {
     "id": "cvt_vocal_modes",

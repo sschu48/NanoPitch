@@ -10,6 +10,8 @@
 const MODEL_URL = '../../deployment/web/model.json';
 const TECHNIQUE_API_URL = 'http://127.0.0.1:8765/analyze';
 const TECHNIQUE_HEALTH_URL = 'http://127.0.0.1:8765/health';
+const TECHNIQUE_ANALYZE_TIMEOUT_MS = 15000;
+const TECHNIQUE_HEALTH_TIMEOUT_MS = 800;
 const SCRIPT_BUFFER_SIZE = 512;
 
 const state = {
@@ -304,13 +306,31 @@ async function analyzeTechnique(wavBlob) {
   if (target) form.append('target_family', target);
 
   try {
-    const response = await fetch(TECHNIQUE_API_URL, { method: 'POST', body: form });
+    const response = await fetchWithTimeout(
+      TECHNIQUE_API_URL,
+      { method: 'POST', body: form },
+      TECHNIQUE_ANALYZE_TIMEOUT_MS
+    );
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     setBadge('technique-badge', 'Technique connected', 'good');
     return await response.json();
   } catch (err) {
-    setBadge('technique-badge', 'Technique offline', 'warn');
-    return null;
+    const timedOut = err && err.name === 'AbortError';
+    setBadge('technique-badge', timedOut ? 'Technique timed out' : 'Technique offline', 'warn');
+    return {
+      ok: false,
+      error: timedOut ? 'Technique request timed out.' : 'Technique service unavailable.',
+    };
+  }
+}
+
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -789,12 +809,20 @@ function clamp01(value) {
 
 async function refreshTechniqueHealth() {
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 800);
-    const response = await fetch(TECHNIQUE_HEALTH_URL, { signal: controller.signal });
-    clearTimeout(timer);
+    const response = await fetchWithTimeout(TECHNIQUE_HEALTH_URL, {}, TECHNIQUE_HEALTH_TIMEOUT_MS);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    setBadge('technique-badge', 'Technique connected', 'good');
+    const health = await response.json();
+    const metadata = health.package_metadata || {};
+    if (metadata.release_ready) {
+      const candidate = metadata.candidate_kind
+        ? metadata.candidate_kind.replaceAll('_', ' ')
+        : 'promoted';
+      setBadge('technique-badge', `Technique ${candidate}`, 'good');
+    } else if (metadata.exists) {
+      setBadge('technique-badge', 'Technique demo', 'warn');
+    } else {
+      setBadge('technique-badge', 'Technique no metadata', 'warn');
+    }
   } catch {
     setBadge('technique-badge', 'Technique offline', 'warn');
   }

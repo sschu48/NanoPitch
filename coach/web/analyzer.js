@@ -315,14 +315,16 @@
   }
 
   function normalizeTechniqueResult(payload) {
-    if (!payload) {
+    if (!payload || payload.ok === false) {
       return {
         axis: 'technique',
         mode: 'detection',
         available: false,
-        headline: 'Technique service unavailable',
+        headline: payload?.error || 'Technique service unavailable',
         feedback: "Start the local technique API to include Brady's GT Singer model output.",
-        metrics: {},
+        metrics: {
+          status: 'service_unavailable',
+        },
         timeline: [],
       };
     }

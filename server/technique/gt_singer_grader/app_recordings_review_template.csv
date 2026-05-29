@@ -1,0 +1,2 @@
+audio_path,recording_id,singer_id,song_id,intended_family,mix,falsetto,breathy,pharyngeal,glissando,vibrato,families,techniques,split_group,label_source,reviewer_id,notes
+data/app_recordings/take_001.wav,app:take-001,singer_001,warmup,vibrato,absent,absent,absent,absent,absent,present,,,singer_001,coach_review,reviewer_a,example reviewed vibrato take

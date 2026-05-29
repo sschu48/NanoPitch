@@ -24,8 +24,6 @@ with warnings.catch_warnings():
     import cgi
 
 from gt_singer_grader.constants import FAMILY_NAMES
-from gt_singer_grader.feedback import build_demo_assessment
-from gt_singer_grader.infer import LoadedPredictor, load_predictor, predict_summary
 
 
 def parse_args() -> argparse.Namespace:
@@ -33,6 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--checkpoint", default=None)
+    parser.add_argument("--metadata", default=None)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--max-upload-mb", type=int, default=25)
     return parser.parse_args()
@@ -42,8 +41,61 @@ def default_checkpoint() -> Path:
     return Path(__file__).resolve().parent / "gt_singer_grader" / "models" / "technique_demo_best.pth"
 
 
+def default_metadata() -> Path:
+    return Path(__file__).resolve().parent / "gt_singer_grader" / "models" / "technique_demo_metadata.json"
+
+
 def display_name(value: str) -> str:
     return value.replace("_", " ")
+
+
+def load_package_metadata(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {
+            "exists": False,
+            "path": str(path),
+            "release_ready": False,
+            "promotion_eligible": False,
+            "app_validation_ready": False,
+            "candidate_kind": None,
+        }
+
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    promotion = payload.get("promotion") if isinstance(payload.get("promotion"), dict) else {}
+    app_validation = (
+        payload.get("app_validation_audit") if isinstance(payload.get("app_validation_audit"), dict) else {}
+    )
+    app_domain_comparison = (
+        payload.get("app_domain_comparison") if isinstance(payload.get("app_domain_comparison"), dict) else {}
+    )
+    contract = payload.get("model_contract") if isinstance(payload.get("model_contract"), dict) else {}
+    candidate_kind = contract.get("candidate_kind")
+    promotion_eligible = promotion.get("eligible") is True
+    app_validation_ready = app_validation.get("ready_for_mvp_validation") is True
+    app_domain_comparison_ready = app_domain_comparison.get("ok") is True
+    release_ready = (
+        candidate_kind == "app_adapted"
+        and promotion_eligible
+        and app_validation_ready
+        and app_domain_comparison_ready
+    )
+    return {
+        "exists": True,
+        "path": str(path),
+        "packaged_at": payload.get("packaged_at"),
+        "candidate_kind": candidate_kind,
+        "contract": contract,
+        "release_ready": release_ready,
+        "promotion_failed_gates": promotion.get("failed_gates") or [],
+        "promotion_unknown_gates": promotion.get("unknown_gates") or [],
+        "promotion_eligible": promotion_eligible,
+        "app_validation_ready": app_validation_ready,
+        "app_domain_comparison_ready": app_domain_comparison_ready,
+        "app_domain_comparison_failed_checks": app_domain_comparison.get("failed_checks") or [],
+        "metrics": payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {},
+        "operating_point": payload.get("operating_point") if isinstance(payload.get("operating_point"), dict) else {},
+    }
 
 
 def build_axis_result(summary: dict[str, Any], assessment: dict[str, Any]) -> dict[str, Any]:
@@ -93,7 +145,8 @@ def build_axis_result(summary: dict[str, Any], assessment: dict[str, Any]) -> di
 
 
 class TechniqueApiHandler(BaseHTTPRequestHandler):
-    predictor: LoadedPredictor
+    predictor: Any
+    package_metadata: dict[str, Any]
     max_upload_bytes: int
 
     server_version = "NanoPitchTechniqueAPI/0.1"
@@ -116,6 +169,7 @@ class TechniqueApiHandler(BaseHTTPRequestHandler):
                 "families": FAMILY_NAMES,
                 "checkpoint_epoch": self.predictor.checkpoint_epoch,
                 "val_metrics": self.predictor.val_metrics,
+                "package_metadata": self.package_metadata,
             }
         )
 
@@ -159,6 +213,9 @@ class TechniqueApiHandler(BaseHTTPRequestHandler):
                 handle.write(file_item.file.read())
 
             try:
+                from gt_singer_grader.feedback import build_demo_assessment
+                from gt_singer_grader.infer import predict_summary
+
                 summary = predict_summary(self.predictor, str(temp_path), target_family=target_family)
                 assessment = build_demo_assessment(summary)
                 self.send_json(
@@ -199,10 +256,14 @@ class TechniqueApiHandler(BaseHTTPRequestHandler):
 def main() -> None:
     args = parse_args()
     checkpoint = Path(args.checkpoint) if args.checkpoint else default_checkpoint()
+    metadata = Path(args.metadata) if args.metadata else default_metadata()
     if not checkpoint.exists():
         raise FileNotFoundError(f"checkpoint not found: {checkpoint}")
 
+    from gt_singer_grader.infer import load_predictor
+
     TechniqueApiHandler.predictor = load_predictor(str(checkpoint), device_name=args.device)
+    TechniqueApiHandler.package_metadata = load_package_metadata(metadata)
     TechniqueApiHandler.max_upload_bytes = args.max_upload_mb * 1024 * 1024
 
     server = ThreadingHTTPServer((args.host, args.port), TechniqueApiHandler)
