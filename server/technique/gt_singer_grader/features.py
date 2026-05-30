@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import random
 import wave
 from functools import lru_cache
 
@@ -54,6 +55,58 @@ def load_wav_mono(path: str, sample_rate: int = SAMPLE_RATE) -> torch.Tensor:
             align_corners=False,
         ).view(-1)
     return waveform
+
+
+def augment_user_recording_audio(audio: torch.Tensor, sample_rate: int = SAMPLE_RATE) -> torch.Tensor:
+    """Lightweight user-recording augmentation for technique training.
+
+    This intentionally uses only torch/stdlib operations so the training
+    pipeline stays dependency-light. It simulates common app-recording
+    mismatch: gain changes, room noise, mild clipping, and simple mic EQ.
+    """
+    if audio.numel() == 0:
+        return audio
+
+    x = audio.float().clone()
+
+    # User recordings arrive at wildly different levels.
+    x = x * random.uniform(0.55, 1.65)
+
+    # Add room/device noise at moderate SNRs.
+    if random.random() < 0.75:
+        snr_db = random.uniform(8.0, 32.0)
+        signal_rms = x.pow(2).mean().sqrt().clamp_min(1e-5)
+        noise = torch.randn_like(x)
+        noise_rms = noise.pow(2).mean().sqrt().clamp_min(1e-5)
+        noise_gain = signal_rms / (noise_rms * (10.0 ** (snr_db / 20.0)))
+        x = x + noise * noise_gain
+
+    # Very small echo/reverb tail to mimic untreated rooms.
+    if random.random() < 0.35 and x.numel() > sample_rate // 10:
+        delay = random.randint(int(0.012 * sample_rate), int(0.08 * sample_rate))
+        decay = random.uniform(0.08, 0.28)
+        echo = torch.zeros_like(x)
+        echo[delay:] = x[:-delay] * decay
+        x = x + echo
+
+    # Crude microphone EQ: random low-pass smoothing.
+    if random.random() < 0.35:
+        kernel_size = random.choice((5, 9, 13, 17))
+        y = F.avg_pool1d(
+            x.view(1, 1, -1),
+            kernel_size=kernel_size,
+            stride=1,
+            padding=kernel_size // 2,
+        ).view(-1)
+        x = 0.65 * x + 0.35 * y[: x.numel()]
+
+    # Cheap-device clipping or over-hot input.
+    if random.random() < 0.30:
+        threshold = random.uniform(0.55, 0.95)
+        x = x.clamp(-threshold, threshold) / threshold
+
+    peak = x.abs().max().clamp_min(1.0)
+    return (x / peak).clamp(-1.0, 1.0)
 
 
 def hz_to_mel(hz: np.ndarray | float) -> np.ndarray | float:

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import random
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import numpy as np
 import torch
@@ -21,10 +21,13 @@ from .constants import (
     FRAME_HOP_SECONDS,
     GROUP_NAME_TO_FAMILY,
     SAMPLE_RATE,
+    TECHNIQUE_INDEX,
     TECHNIQUE_FOLDER_TO_FAMILY,
 )
-from .features import load_wav_mono, log_mel_spectrogram
+from .features import augment_user_recording_audio, load_wav_mono, log_mel_spectrogram
 from .labels import build_frame_labels, load_alignment
+from .manifest import normalize_label_list, read_jsonl, trainability_reason
+from .split_health import split_coverage_errors, trainable_technique_families, validate_val_ratio
 
 
 @dataclass(frozen=True)
@@ -115,26 +118,66 @@ def split_records(
     records: Iterable[SampleRecord],
     val_ratio: float = 0.2,
     seed: int = 1337,
+    group_by: str = "song",
 ) -> tuple[list[SampleRecord], list[SampleRecord]]:
-    """Split by speaker/family/song so paired clips stay together."""
-    family_groups: dict[str, list[str]] = defaultdict(list)
+    """Split records while keeping related clips on one side of the split."""
+    if group_by not in {"song", "speaker"}:
+        raise ValueError(f"unknown split group: {group_by}")
+    validate_val_ratio(val_ratio)
+
+    def split_key(record: SampleRecord) -> str:
+        if group_by == "speaker":
+            return record.speaker
+        return record.split_group
+
     record_list = list(records)
-    for record in record_list:
-        family_groups[record.family].append(record.split_group)
+    unique_groups = sorted({split_key(record) for record in record_list})
 
     rng = random.Random(seed)
-    val_groups: set[str] = set()
-    for family, groups in family_groups.items():
-        unique_groups = sorted(set(groups))
-        rng.shuffle(unique_groups)
-        if len(unique_groups) <= 1 or val_ratio <= 0.0:
-            continue
-        n_val = max(1, int(round(len(unique_groups) * val_ratio)))
-        n_val = min(n_val, len(unique_groups) - 1)
-        val_groups.update(unique_groups[:n_val])
+    rng.shuffle(unique_groups)
+    if len(unique_groups) <= 1 or val_ratio <= 0.0:
+        return record_list, []
 
-    train_records = [record for record in record_list if record.split_group not in val_groups]
-    val_records = [record for record in record_list if record.split_group in val_groups]
+    n_val = max(1, int(round(len(unique_groups) * val_ratio)))
+    n_val = min(n_val, len(unique_groups) - 1)
+    val_groups: set[str] = set()
+    target_families = trainable_technique_families(record_list)
+
+    def can_add(candidate: str) -> bool:
+        next_val_groups = val_groups | {candidate}
+        next_train = [record for record in record_list if split_key(record) not in next_val_groups]
+        next_val = [record for record in record_list if split_key(record) in next_val_groups]
+        if split_coverage_errors(next_train, source="train split", purpose="training"):
+            return False
+        if split_coverage_errors(next_val, source="validation split", purpose="validation"):
+            return False
+        return target_families <= trainable_technique_families(next_train)
+
+    for family in sorted(target_families):
+        current_val = [record for record in record_list if split_key(record) in val_groups]
+        if family in trainable_technique_families(current_val):
+            continue
+        for candidate in unique_groups:
+            if candidate in val_groups:
+                continue
+            candidate_records = [record for record in record_list if split_key(record) == candidate]
+            if family not in trainable_technique_families(candidate_records):
+                continue
+            if can_add(candidate):
+                val_groups.add(candidate)
+                break
+
+    target_val_groups = max(n_val, len(val_groups))
+    for candidate in unique_groups:
+        if len(val_groups) >= target_val_groups:
+            continue
+        if candidate in val_groups:
+            continue
+        if can_add(candidate):
+            val_groups.add(candidate)
+
+    train_records = [record for record in record_list if split_key(record) not in val_groups]
+    val_records = [record for record in record_list if split_key(record) in val_groups]
     return train_records, val_records
 
 
@@ -151,6 +194,88 @@ def summarize_records(records: Iterable[SampleRecord]) -> dict[str, int]:
     return dict(sorted(counter.items()))
 
 
+def summarize_manifest_records(records: Iterable[dict[str, Any]]) -> dict[str, int]:
+    counter = Counter()
+    for record in records:
+        family = manifest_family(record)
+        dataset = str(record.get("dataset") or "unknown")
+        counter[f"{dataset}:{family}"] += 1
+    return dict(sorted(counter.items()))
+
+
+def read_training_manifest(path: str) -> list[dict[str, Any]]:
+    return read_jsonl(path)
+
+
+def manifest_audio_path(record: dict[str, Any]) -> str:
+    audio_path = record.get("audio_path") or record.get("wav_path")
+    if not isinstance(audio_path, str) or not audio_path:
+        raise ValueError(f"manifest record has no audio path: {record.get('recording_id') or record.get('stem')}")
+    return audio_path
+
+
+def manifest_json_path(record: dict[str, Any]) -> str:
+    json_path = record.get("json_path")
+    return json_path if isinstance(json_path, str) else ""
+
+
+def manifest_family(record: dict[str, Any]) -> str:
+    if record.get("role") in {"control", "speech"}:
+        return "control"
+    family = record.get("family")
+    if isinstance(family, str) and family:
+        return family
+    labels = record.get("labels")
+    if isinstance(labels, dict):
+        families = normalize_label_list(labels.get("families"))
+        if families:
+            return families[0]
+    raise ValueError(f"manifest record has no family label: {record.get('recording_id') or record.get('stem')}")
+
+
+def manifest_techniques(record: dict[str, Any]) -> list[str]:
+    labels = record.get("labels")
+    if isinstance(labels, dict):
+        return normalize_label_list(labels.get("techniques"))
+    return []
+
+
+def _choose_window(total_frames: int, max_frames: int, training: bool) -> tuple[int, int]:
+    if total_frames <= max_frames:
+        return 0, total_frames
+    if training:
+        start = random.randint(0, total_frames - max_frames)
+    else:
+        start = (total_frames - max_frames) // 2
+    return start, start + max_frames
+
+
+def _pad_example(
+    mel: torch.Tensor,
+    vad_target: torch.Tensor,
+    technique_target: torch.Tensor,
+    max_frames: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    frame_mask = torch.ones(mel.size(0), dtype=torch.float32)
+    if mel.size(0) < max_frames:
+        pad_frames = max_frames - mel.size(0)
+        mel = F.pad(mel, (0, 0, 0, pad_frames))
+        vad_target = F.pad(vad_target, (0, pad_frames))
+        technique_target = F.pad(technique_target, (0, 0, 0, pad_frames))
+        frame_mask = F.pad(frame_mask, (0, pad_frames))
+    return mel, vad_target, technique_target, frame_mask
+
+
+def _weak_clip_targets(n_frames: int, techniques: Iterable[str]) -> tuple[torch.Tensor, torch.Tensor]:
+    vad_target = torch.ones(n_frames, dtype=torch.float32)
+    technique_target = torch.zeros((n_frames, len(TECHNIQUE_INDEX)), dtype=torch.float32)
+    for technique in techniques:
+        index = TECHNIQUE_INDEX.get(technique)
+        if index is not None:
+            technique_target[:, index] = 1.0
+    return vad_target, technique_target
+
+
 class GTSingerTechniqueDataset(Dataset):
     """Clip sampler that turns GT Singer records into tensors."""
 
@@ -163,6 +288,7 @@ class GTSingerTechniqueDataset(Dataset):
         hop_seconds: float = FRAME_HOP_SECONDS,
         max_seconds: float = DEFAULT_MAX_SECONDS,
         training: bool = True,
+        audio_augmentation: bool = False,
     ) -> None:
         self.records = list(records)
         self.sample_rate = sample_rate
@@ -170,22 +296,19 @@ class GTSingerTechniqueDataset(Dataset):
         self.hop_seconds = hop_seconds
         self.max_frames = max(1, int(round(max_seconds / hop_seconds)))
         self.training = training
+        self.audio_augmentation = audio_augmentation
 
     def __len__(self) -> int:
         return len(self.records)
 
     def _choose_window(self, total_frames: int) -> tuple[int, int]:
-        if total_frames <= self.max_frames:
-            return 0, total_frames
-        if self.training:
-            start = random.randint(0, total_frames - self.max_frames)
-        else:
-            start = (total_frames - self.max_frames) // 2
-        return start, start + self.max_frames
+        return _choose_window(total_frames, self.max_frames, self.training)
 
     def __getitem__(self, index: int) -> dict[str, torch.Tensor | int | str]:
         record = self.records[index]
         audio = load_wav_mono(record.wav_path, self.sample_rate)
+        if self.training and self.audio_augmentation:
+            audio = augment_user_recording_audio(audio, self.sample_rate)
         mel = log_mel_spectrogram(audio, sample_rate=self.sample_rate, n_mels=self.n_mels, hop_seconds=self.hop_seconds)
         mel = (mel - mel.mean()) / mel.std().clamp_min(1e-5)
 
@@ -204,13 +327,12 @@ class GTSingerTechniqueDataset(Dataset):
         vad_target = vad_target[start:end]
         technique_target = technique_target[start:end]
 
-        frame_mask = torch.ones(mel.size(0), dtype=torch.float32)
-        if mel.size(0) < self.max_frames:
-            pad_frames = self.max_frames - mel.size(0)
-            mel = F.pad(mel, (0, 0, 0, pad_frames))
-            vad_target = F.pad(vad_target, (0, pad_frames))
-            technique_target = F.pad(technique_target, (0, 0, 0, pad_frames))
-            frame_mask = F.pad(frame_mask, (0, pad_frames))
+        mel, vad_target, technique_target, frame_mask = _pad_example(
+            mel,
+            vad_target,
+            technique_target,
+            self.max_frames,
+        )
 
         technique_presence = technique_target.max(dim=0).values
 
@@ -230,4 +352,91 @@ class GTSingerTechniqueDataset(Dataset):
             "pace": metadata.get("pace", ""),
             "range": metadata.get("range", ""),
             "emotion": metadata.get("emotion", ""),
+        }
+
+
+class ManifestTechniqueDataset(Dataset):
+    """Clip sampler for normalized manifests and legacy GT Singer manifests."""
+
+    def __init__(
+        self,
+        records: Iterable[dict[str, Any]],
+        *,
+        sample_rate: int = SAMPLE_RATE,
+        n_mels: int = DEFAULT_N_MELS,
+        hop_seconds: float = FRAME_HOP_SECONDS,
+        max_seconds: float = DEFAULT_MAX_SECONDS,
+        training: bool = True,
+        audio_augmentation: bool = False,
+    ) -> None:
+        self.records = list(records)
+        self.sample_rate = sample_rate
+        self.n_mels = n_mels
+        self.hop_seconds = hop_seconds
+        self.max_frames = max(1, int(round(max_seconds / hop_seconds)))
+        self.training = training
+        self.audio_augmentation = audio_augmentation
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor | int | str]:
+        record = self.records[index]
+        family = manifest_family(record)
+        reason = trainability_reason(record)
+        if reason != "trainable" or family not in FAMILY_TO_INDEX:
+            raise ValueError(f"record cannot be used as a training example yet: {reason}")
+
+        audio_path = manifest_audio_path(record)
+        audio = load_wav_mono(audio_path, self.sample_rate)
+        if self.training and self.audio_augmentation:
+            audio = augment_user_recording_audio(audio, self.sample_rate)
+        mel = log_mel_spectrogram(audio, sample_rate=self.sample_rate, n_mels=self.n_mels, hop_seconds=self.hop_seconds)
+        mel = (mel - mel.mean()) / mel.std().clamp_min(1e-5)
+
+        json_path = manifest_json_path(record)
+        if json_path:
+            alignment = load_alignment(json_path)
+            vad_target_np, technique_target_np, metadata = build_frame_labels(
+                alignment,
+                n_frames=mel.size(0),
+                hop_seconds=self.hop_seconds,
+            )
+            vad_target = torch.from_numpy(vad_target_np)
+            technique_target = torch.from_numpy(technique_target_np)
+        else:
+            vad_target, technique_target = _weak_clip_targets(mel.size(0), manifest_techniques(record))
+            metadata = {}
+
+        start, end = _choose_window(mel.size(0), self.max_frames, self.training)
+        mel = mel[start:end]
+        vad_target = vad_target[start:end]
+        technique_target = technique_target[start:end]
+
+        mel, vad_target, technique_target, frame_mask = _pad_example(
+            mel,
+            vad_target,
+            technique_target,
+            self.max_frames,
+        )
+        technique_presence = technique_target.max(dim=0).values
+        labels = record.get("labels")
+        clip_role = labels.get("clip_role", "") if isinstance(labels, dict) else ""
+
+        return {
+            "mel": mel.float(),
+            "vad_target": vad_target.float(),
+            "technique_target": technique_target.float(),
+            "technique_presence": technique_presence.float(),
+            "frame_mask": frame_mask.float(),
+            "clip_label": FAMILY_TO_INDEX[family],
+            "family": family,
+            "role": str(record.get("role") or clip_role),
+            "speaker": str(record.get("speaker_id") or record.get("speaker") or ""),
+            "song": str(record.get("song_id") or record.get("song") or ""),
+            "stem": str(record.get("recording_id") or Path(audio_path).stem),
+            "singing_method": str(metadata.get("singing_method", "")),
+            "pace": str(metadata.get("pace", "")),
+            "range": str(metadata.get("range", "")),
+            "emotion": str(metadata.get("emotion", "")),
         }

@@ -1,0 +1,79 @@
+[
+  {
+    "id": "gtsinger",
+    "name": "GT Singer",
+    "role": "primary_supervised_technique_source",
+    "priority": 1,
+    "recording_domain": "studio",
+    "label_fit": "Strong fit for breathy, glissando, mixed voice, falsetto, pharyngeal, vibrato, and control.",
+    "main_gap": "High-quality studio singing; not representative of everyday app recordings.",
+    "source_url": "https://github.com/AaronZ345/GTSinger",
+    "acquisition": "python3 -m gt_singer_grader.download_dataset --output-dir ./gt_singer_grader/data/GTSinger"
+  },
+  {
+    "id": "vocalset",
+    "name": "VocalSet",
+    "role": "supplemental_supervised_technique_source",
+    "priority": 2,
+    "recording_domain": "studio_exercises",
+    "label_fit": "Useful controlled vocal techniques and exercises.",
+    "main_gap": "Professional/controlled singers and exercises, not user-uploaded songs.",
+    "source_url": "https://zenodo.org/records/1442513",
+    "acquisition": "manual_download_then_python3 -m gt_singer_grader.build_manifest vocalset --root ./gt_singer_grader/data/VocalSet --output ./gt_singer_grader/manifests/vocalset.jsonl"
+  },
+  {
+    "id": "cvt_vocal_modes",
+    "name": "Automatic Vocal Mode Classification Dataset",
+    "role": "supplemental_supervised_mode_source",
+    "priority": 2,
+    "recording_domain": "studio_sustained_vowels",
+    "label_fit": "CVT modes Neutral, Curbing, Overdrive, and Edge; useful if we add broader voice-mode detection.",
+    "main_gap": "Sustained vowels and CVT taxonomy do not map one-to-one to GT Singer technique classes.",
+    "source_url": "https://zenodo.org/records/12208342",
+    "acquisition": "manual_download"
+  },
+  {
+    "id": "svqtd",
+    "name": "Singing Voice Quality and Technique Database",
+    "role": "supplemental_attribute_source",
+    "priority": 3,
+    "recording_domain": "youtube_classical_tenor",
+    "label_fit": "Annotated vocal-pedagogy attributes including vibrato-related quality signals.",
+    "main_gap": "Classical tenor repertoire only; not casual app-user singing.",
+    "source_url": "https://catalogue.yorvoice.york.ac.uk/catalogue/CI3KX3KM",
+    "acquisition": "manual_download"
+  },
+  {
+    "id": "damp_s_ag",
+    "name": "DAMP-S-AG",
+    "role": "domain_adaptation_and_eval_source",
+    "priority": 3,
+    "recording_domain": "mobile_karaoke",
+    "label_fit": "Excellent match for real-world mobile karaoke audio.",
+    "main_gap": "No technique labels; research license constraints.",
+    "source_url": "https://zenodo.org/records/3596940",
+    "acquisition": "manual_download_after_license_review"
+  },
+  {
+    "id": "ccmusic_acapella",
+    "name": "CCMusic Acapella Evaluation Dataset",
+    "role": "quality_axis_reference",
+    "priority": 4,
+    "recording_domain": "acapella_evaluation",
+    "label_fit": "Expert scores for pitch, rhythm, vocal range, timbre, pronunciation, vibrato, dynamics, breath control, and overall performance.",
+    "main_gap": "Quality scoring source, not a direct technique-detector training set.",
+    "source_url": "https://huggingface.co/datasets/ccmusic-database/acapella",
+    "acquisition": "manual_download_or_huggingface_datasets"
+  },
+  {
+    "id": "app_recordings",
+    "name": "NanoPitch App Recordings",
+    "role": "target_domain_supervised_source",
+    "priority": 1,
+    "recording_domain": "app_user",
+    "label_fit": "Best source for the real product objective when labeled by coach/reviewer.",
+    "main_gap": "Needs collection, consent, storage policy, and annotation workflow.",
+    "source_url": "internal",
+    "acquisition": "collect_with_app_recording_protocol"
+  }
+]

@@ -7,7 +7,11 @@ import json
 import numpy as np
 import torch
 
-from .constants import DEFAULT_ONSET_PENALTY, FAMILY_NAMES, PRIMARY_FAMILY_TO_TECHNIQUES, TECHNIQUE_KEYS
+from .constants import DEFAULT_ONSET_PENALTY, FAMILY_NAMES, FRAME_HOP_SECONDS, PRIMARY_FAMILY_TO_TECHNIQUES, TECHNIQUE_KEYS
+
+
+MIN_VOICED_RATIO = 0.15
+MIN_TECHNIQUE_SCORE = 0.30
 
 
 def smooth_binary_predictions(logits: torch.Tensor, onset_penalty: float = DEFAULT_ONSET_PENALTY) -> np.ndarray:
@@ -52,8 +56,100 @@ def _family_phrase(family: str) -> str:
     return family.replace("_", " ")
 
 
+def _technique_phrase(technique: str) -> str:
+    if technique == "mix":
+        return "mixed voice"
+    return _family_phrase(technique)
+
+
+def _rank_scores(scores: dict[str, float], *, label_key: str) -> list[dict[str, object]]:
+    return [
+        {label_key: name, "score": float(score)}
+        for name, score in sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    ]
+
+
+def _dominant_techniques(technique_scores: dict[str, float]) -> list[dict[str, object]]:
+    ranked = _rank_scores(technique_scores, label_key="technique")
+    return [item for item in ranked if float(item["score"]) >= MIN_TECHNIQUE_SCORE][:3]
+
+
+def _technique_timeline(
+    technique_probs: np.ndarray,
+    voiced_mask: np.ndarray,
+    *,
+    hop_seconds: float = FRAME_HOP_SECONDS,
+    window_seconds: float = 1.0,
+    max_windows: int = 120,
+) -> list[dict[str, object]]:
+    """Aggregate frame probabilities into coarse UI-friendly windows."""
+    if technique_probs.size == 0:
+        return []
+
+    window_frames = max(1, int(round(window_seconds / hop_seconds)))
+    timeline: list[dict[str, object]] = []
+    for left in range(0, technique_probs.shape[0], window_frames):
+        right = min(technique_probs.shape[0], left + window_frames)
+        window_probs = technique_probs[left:right]
+        window_voiced = voiced_mask[left:right]
+        voiced_count = float(window_voiced.sum())
+        voiced_ratio = float(np.mean(window_voiced)) if window_voiced.size else 0.0
+
+        if voiced_count >= 1.0:
+            scores_np = (window_probs * window_voiced[:, None]).sum(axis=0) / voiced_count
+        else:
+            scores_np = window_probs.mean(axis=0)
+
+        scores = {name: float(scores_np[index]) for index, name in enumerate(TECHNIQUE_KEYS)}
+        top = max(scores.items(), key=lambda item: item[1])
+        technique = top[0] if voiced_ratio >= MIN_VOICED_RATIO and top[1] >= MIN_TECHNIQUE_SCORE else "none"
+
+        timeline.append(
+            {
+                "start_s": round(left * hop_seconds, 3),
+                "end_s": round(right * hop_seconds, 3),
+                "technique": technique,
+                "score": float(top[1]),
+                "voiced_ratio": voiced_ratio,
+                "scores": scores,
+            }
+        )
+
+    if len(timeline) <= max_windows:
+        return timeline
+
+    stride = int(np.ceil(len(timeline) / max_windows))
+    return timeline[::stride]
+
+
+def _detection_status(
+    *,
+    detected_confidence: float,
+    family_margin: float,
+    primary_score: float,
+    voiced_ratio: float,
+) -> tuple[str, list[str]]:
+    reasons: list[str] = []
+    if voiced_ratio < MIN_VOICED_RATIO:
+        reasons.append("not_enough_voiced_singing")
+        return "not_enough_voice", reasons
+
+    if primary_score < MIN_TECHNIQUE_SCORE and detected_confidence < 0.35:
+        reasons.append("no_technique_score_cleared_threshold")
+        return "no_clear_technique", reasons
+
+    if detected_confidence < 0.35 and family_margin < 0.08:
+        reasons.append("low_family_confidence")
+    if primary_score < MIN_TECHNIQUE_SCORE:
+        reasons.append("low_frame_level_technique_strength")
+
+    if reasons:
+        return "uncertain", reasons
+    return "detected", reasons
+
+
 def _format_feedback(target_family: str, target_strength: float, off_target_strength: float, voiced_ratio: float) -> str:
-    if voiced_ratio < 0.15:
+    if voiced_ratio < MIN_VOICED_RATIO:
         return "Too little voiced singing was detected to grade this take reliably."
 
     if target_family == "control":
@@ -98,15 +194,33 @@ def summarize_prediction(
     detected_family, detected_confidence = ranked_families[0]
     runner_up_family, runner_up_confidence = ranked_families[1] if len(ranked_families) > 1 else ranked_families[0]
     voiced_ratio = float(np.mean(voiced_mask))
+    ranked_techniques = _rank_scores(technique_scores, label_key="technique")
+    primary_technique = str(ranked_techniques[0]["technique"]) if ranked_techniques else None
+    primary_technique_score = float(ranked_techniques[0]["score"]) if ranked_techniques else 0.0
+    dominant_techniques = _dominant_techniques(technique_scores)
+    family_margin = float(detected_confidence - runner_up_confidence)
+    detection_status, detection_reasons = _detection_status(
+        detected_confidence=float(detected_confidence),
+        family_margin=family_margin,
+        primary_score=primary_technique_score,
+        voiced_ratio=voiced_ratio,
+    )
 
     summary: dict[str, object] = {
         "detected_family": detected_family,
         "detected_confidence": float(detected_confidence),
         "runner_up_family": runner_up_family,
         "runner_up_confidence": float(runner_up_confidence),
-        "family_margin": float(detected_confidence - runner_up_confidence),
+        "family_margin": family_margin,
         "family_probabilities": family_score_map,
         "technique_scores": technique_scores,
+        "ranked_techniques": ranked_techniques,
+        "dominant_techniques": dominant_techniques,
+        "primary_technique": primary_technique,
+        "primary_technique_score": primary_technique_score,
+        "detection_status": detection_status,
+        "detection_reasons": detection_reasons,
+        "technique_timeline": _technique_timeline(technique_probs, voiced_mask),
         "voiced_ratio": voiced_ratio,
     }
 
@@ -144,16 +258,20 @@ def build_demo_assessment(summary: dict[str, object]) -> dict[str, object]:
     """Turn a prediction summary into a demo-friendly verdict."""
     target_family = summary.get("target_family")
     detected_family = str(summary["detected_family"])
+    primary_technique = summary.get("primary_technique")
     detected_confidence = float(summary.get("detected_confidence", 0.0))
     runner_up_family = str(summary.get("runner_up_family", detected_family))
     family_margin = float(summary.get("family_margin", 0.0))
     voiced_ratio = float(summary.get("voiced_ratio", 0.0))
+    detection_status = str(summary.get("detection_status", "detected"))
+    headline_name = _technique_phrase(str(primary_technique)) if primary_technique else _family_phrase(detected_family)
 
     assessment: dict[str, object] = {
         "status": "detected_only",
-        "headline": f"Detected {_family_phrase(detected_family)}",
+        "headline": f"Detected {headline_name}",
         "badge": "Technique Detected",
         "detected_family_display": _family_phrase(detected_family),
+        "primary_technique_display": _technique_phrase(str(primary_technique)) if primary_technique else None,
         "runner_up_family_display": _family_phrase(runner_up_family),
         "confidence": detected_confidence,
         "confidence_percent": float(100.0 * detected_confidence),
@@ -163,7 +281,7 @@ def build_demo_assessment(summary: dict[str, object]) -> dict[str, object]:
         "target_family_display": _family_phrase(str(target_family)) if target_family else None,
     }
 
-    if voiced_ratio < 0.15:
+    if voiced_ratio < MIN_VOICED_RATIO:
         assessment.update(
             {
                 "status": "not_enough_voice",
@@ -174,7 +292,18 @@ def build_demo_assessment(summary: dict[str, object]) -> dict[str, object]:
         )
         return assessment
 
-    if detected_confidence < 0.35 and family_margin < 0.08:
+    if detection_status == "no_clear_technique":
+        assessment.update(
+            {
+                "status": "no_clear_technique",
+                "badge": "No Clear Technique",
+                "headline": "No clear technique was detected",
+                "feedback": "The take has voiced singing, but no technique score is strong enough to call yet.",
+            }
+        )
+        return assessment
+
+    if detection_status == "uncertain":
         assessment.update(
             {
                 "status": "uncertain",
@@ -186,8 +315,9 @@ def build_demo_assessment(summary: dict[str, object]) -> dict[str, object]:
         return assessment
 
     if target_family is None:
+        detected_text = _technique_phrase(str(primary_technique)) if primary_technique else _family_phrase(detected_family)
         assessment["feedback"] = (
-            f"The take reads most strongly as {_family_phrase(detected_family)}. "
+            f"The take reads most strongly as {detected_text}. "
             "Choose an intended technique in the demo to get a well-done or needs-work verdict."
         )
         return assessment

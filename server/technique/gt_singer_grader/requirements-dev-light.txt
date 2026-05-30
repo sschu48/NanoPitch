@@ -1,0 +1,10 @@
+# Intentionally lightweight.
+#
+# The no-data developer checks use only Python stdlib plus Node.js:
+#
+#   make technique-check-light
+#
+# Install gt_singer_grader/requirements-demo.txt only for packaged checkpoint
+# inference, install gt_singer_grader/requirements-training.txt for technique
+# model training, and install the root requirements.txt only for full NanoPitch
+# pitch/VAD training work.

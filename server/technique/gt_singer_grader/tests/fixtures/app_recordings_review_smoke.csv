@@ -1,0 +1,7 @@
+audio_path,recording_id,singer_id,song_id,intended_family,mix,falsetto,breathy,pharyngeal,glissando,vibrato,families,techniques,split_group,label_source,reviewer_id,notes
+data/app_recordings/take_001.wav,app:smoke-vibrato-001,singer_001,warmup,vibrato,absent,absent,absent,absent,absent,present,,,singer_001,coach_review,reviewer_a,clear vibrato
+data/app_recordings/take_002.wav,app:smoke-breathy-001,singer_002,warmup,breathy,absent,absent,present,absent,absent,absent,,,singer_002,coach_review,reviewer_a,clear breathy
+data/app_recordings/take_003.wav,app:smoke-vibrato-002,singer_003,warmup,vibrato,absent,absent,absent,absent,absent,strong,,,singer_003,coach_review,reviewer_a,second vibrato group
+data/app_recordings/take_004.wav,app:smoke-breathy-002,singer_004,warmup,breathy,absent,absent,strong,absent,absent,absent,,,singer_004,coach_review,reviewer_a,second breathy group
+data/app_recordings/take_005.wav,app:smoke-unclear-001,singer_005,warmup,,absent,weak,absent,absent,absent,absent,,,singer_005,coach_review,reviewer_a,weak only
+data/app_recordings/take_006.wav,app:smoke-none-001,singer_006,warmup,none,absent,absent,absent,absent,absent,absent,,,singer_006,coach_review,reviewer_a,no target technique
