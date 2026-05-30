@@ -2,16 +2,17 @@
 
 NanoPitch Coach is a browser-based singing analysis MVP. It records one free
 take, analyzes that same WAV, and returns objective feedback for pitch, tempo,
-dynamics, and optional vocal technique.
+dynamics, and vocal technique.
 
 ## 30-Second Summary
 
 - **What we built:** a local singing-coach demo that turns one recorded take
-  into a multi-axis feedback report.
+  into a four-axis feedback report.
 - **Coaching problem:** give a beginner immediate objective feedback after
   singing, before attempting full song/reference grading.
 - **How it works:** browser mic -> 16 kHz WAV -> NanoPitch WASM model -> local
-  analyzer -> report cards; optional PyTorch technique API.
+  analyzer -> pitch/tempo/dynamics cards; the same WAV is sent to a local
+  PyTorch technique API for the fourth card.
 - **What it "grades":** this MVP is detection-first. It reports measured pitch,
   rhythm, loudness, and technique signals. It does not yet score against a MIDI
   melody, reference singer, or teacher-authored target.
@@ -32,7 +33,7 @@ Open:
 http://127.0.0.1:8080/coach/web/
 ```
 
-Optional technique service:
+In a second terminal, start the technique service for the fourth axis:
 
 ```bash
 make technique-api
@@ -43,6 +44,8 @@ cards: pitch, tempo, dynamics, and technique. If the technique API is not
 running or times out, the browser app still completes the report and marks the
 technique axis unavailable.
 
+For the final class demo, run both commands so all four axes are active.
+
 ## What The App Reports
 
 | Axis | What we measure | Implementation |
@@ -50,7 +53,7 @@ technique axis unavailable.
 | Pitch | voiced percent, median f0, median note, range, short-term stability | NanoPitch WASM pitch/VAD model |
 | Tempo | onset count, estimated BPM, onset spacing | browser DSP novelty + autocorrelation |
 | Dynamics | average/peak loudness and range used | RMS dBFS contour |
-| Technique | detected technique family and confidence | optional local GT Singer PyTorch API |
+| Technique | detected technique family and confidence | local GT Singer PyTorch API |
 
 ## Pipeline
 
@@ -60,8 +63,8 @@ Browser microphone
   -> NanoPitch WebAssembly inference
   -> per-frame VAD, f0, posteriorgram, mel, RMS
   -> local report builder for pitch, tempo, dynamics
-  -> optional POST /analyze to technique API
-  -> unified free_take_detection report
+  -> POST /analyze to local technique API
+  -> unified four-axis free_take_detection report
 ```
 
 ## Data, Models, And Libraries
@@ -114,9 +117,17 @@ Current result: all 4 synthetic fixtures pass.
 | `dynamics_constant` | low contrast | 0.7 dB range |
 | `dynamics_soft_loud_soft` | clear contrast | 13.8 dB range |
 
-Technique checkpoint metadata reports 65.8% clip accuracy and 0.497 technique
-macro F1. We treat that as optional model output, not a final singing-quality
-grade.
+### Technique Model
+
+The submitted technique axis uses a packaged GT Singer English checkpoint at
+`server/technique/gt_singer_grader/models/technique_demo_best.pth`. It reports
+detected technique family, confidence, dominant frame-level technique scores,
+and a coarse timeline. The checkpoint metadata reports 65.8% clip accuracy and
+0.497 technique macro F1 on its held-out validation split.
+
+This is the final fourth axis for the class project, but it is still
+detection-first. We do not claim that it is a production vocal-coaching judge:
+it has not yet been validated on a large set of real NanoPitch app recordings.
 
 ## Repo Map
 
@@ -124,7 +135,7 @@ grade.
 |---|---|
 | `coach/web/` | main Project 2 browser UI |
 | `deployment/web/` | NanoPitch WASM runtime and browser model |
-| `server/technique/` | optional local technique API |
+| `server/technique/` | local technique API and GT Singer technique-model workflow |
 | `training/` | NanoPitch model, training, and evaluation code |
 | `validation/` | synthetic browser-path validation harness |
 | `RESULTS.md` | detailed NanoPitch augmentation results |
@@ -141,7 +152,9 @@ Ignored local folders such as `.venv/`, `data/`, `NanoPitch-technique/`,
    louder section.
 4. Show that the same recorded WAV drives every report card.
 5. Point out median note/f0, voiced percent, BPM/onsets, and dynamics range.
-6. If the technique API is running, show detected family and confidence.
+6. Show the technique card from the local technique API: detected family,
+   confidence, dominant technique scores, and target match if a focus technique
+   is selected.
 7. Close with the key limitation: this is detection feedback, not full song
    grading yet. Full grading needs a MIDI score, reference take, or authored
    target.

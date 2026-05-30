@@ -108,13 +108,17 @@ Open:
 http://127.0.0.1:8080/coach/web/
 ```
 
-The optional technique API requires PyTorch:
+The technique API requires PyTorch:
 
 ```bash
-python3 server/technique/api.py --port 8765
+make technique-api
 ```
 
-If the API is offline, the browser still reports pitch, tempo, and dynamics.
+Run it from the repo root in a second terminal while `python3 -m http.server
+8080` serves the browser app. With the API running, the browser report contains
+all four project axes: pitch, tempo, dynamics, and technique. If the API is
+offline, the browser still reports pitch, tempo, and dynamics and marks the
+technique axis unavailable.
 
 ## Training Later
 
