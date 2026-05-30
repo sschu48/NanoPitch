@@ -1,27 +1,33 @@
 # NanoPitch Coach
 
-NanoPitch Coach is a browser-based singing analysis MVP. It records one free
-take, analyzes that same WAV, and returns objective feedback for pitch, tempo,
-dynamics, and vocal technique.
+NanoPitch Coach is a browser-based singing-coach demo. It records one free
+take, analyzes that same WAV, and returns a four-axis feedback report:
 
-## 30-Second Summary
+- pitch
+- tempo
+- dynamics
+- vocal technique
 
-- **What we built:** a local singing-coach demo that turns one recorded take
-  into a four-axis feedback report.
-- **Coaching problem:** give a beginner immediate objective feedback after
-  singing, before attempting full song/reference grading.
-- **How it works:** browser mic -> 16 kHz WAV -> NanoPitch WASM model -> local
-  analyzer -> pitch/tempo/dynamics cards; the same WAV is sent to a local
-  PyTorch technique API for the fourth card.
-- **What it "grades":** this MVP is detection-first. It reports measured pitch,
-  rhythm, loudness, and technique signals. It does not yet score against a MIDI
-  melody, reference singer, or teacher-authored target.
-- **Main validation:** 4/4 synthetic browser-path tests pass; NanoPitch VAD
-  improved from 86.8% to 94.9% after random-SNR augmentation.
+The project is detection-first. It gives objective post-take feedback about
+what happened in the recording; it does not grade against a MIDI score,
+reference singer, or teacher-authored lesson target.
 
-## Run The Demo
+## Problem We Tried To Solve
 
-From the repo root:
+Beginner singers often do not know what changed between takes. Our goal was to
+give immediate, objective feedback after a short recording so a singer can see:
+
+- whether they produced stable voiced pitch
+- whether their attacks imply a consistent tempo
+- whether they used dynamic contrast
+- what vocal technique the model detects
+
+This is not meant to replace a vocal coach. It is a lightweight feedback tool
+that makes one recorded take easier to inspect.
+
+## Run The Project
+
+From the repo root, start the browser app:
 
 ```bash
 python3 -m http.server 8080
@@ -33,74 +39,81 @@ Open:
 http://127.0.0.1:8080/coach/web/
 ```
 
-In a second terminal, start the technique service for the fourth axis:
+In a second terminal, start the technique service:
 
 ```bash
 make technique-api
 ```
 
-With the technique service running, the same recorded WAV produces four report
-cards: pitch, tempo, dynamics, and technique. If the technique API is not
-running or times out, the browser app still completes the report and marks the
-technique axis unavailable.
-
-For the final class demo, run both commands so all four axes are active.
-
-## What The App Reports
-
-| Axis | What we measure | Implementation |
-|---|---|---|
-| Pitch | voiced percent, median f0, median note, range, short-term stability | NanoPitch WASM pitch/VAD model |
-| Tempo | onset count, estimated BPM, onset spacing | browser DSP novelty + autocorrelation |
-| Dynamics | average/peak loudness and range used | RMS dBFS contour |
-| Technique | detected technique family and confidence | local GT Singer PyTorch API |
+With both commands running, the app records one take and shows all four axes.
+If the technique API is not running, the app still shows pitch, tempo, and
+dynamics, and marks technique as unavailable.
 
 ## Pipeline
 
 ```text
 Browser microphone
-  -> recorded 16 kHz free-take WAV
-  -> NanoPitch WebAssembly inference
-  -> per-frame VAD, f0, posteriorgram, mel, RMS
-  -> local report builder for pitch, tempo, dynamics
-  -> POST /analyze to local technique API
-  -> unified four-axis free_take_detection report
+  -> record one 16 kHz WAV
+  -> run NanoPitch WebAssembly pitch/VAD model in the browser
+  -> compute pitch, tempo, and dynamics summaries in JavaScript
+  -> send the same WAV to the local PyTorch technique API
+  -> return one unified four-axis report
 ```
 
-## Data, Models, And Libraries
+## What Each Axis Reports
 
-| Category | What we used |
-|---|---|
-| Training data | GTSinger vocal features, FSDNoisy18k environmental noise |
-| Pitch labels | RMVPE-derived f0 labels from the NanoPitch feature set |
-| Pitch/VAD model | NanoPitch causal conv + GRU model exported to `deployment/web/model.json` |
-| Technique model | GT Singer technique classifier in `server/technique/gt_singer_grader/` |
-| Browser stack | plain JavaScript, Web Audio API, Canvas/SVG/HTML, WebAssembly |
-| Python stack | PyTorch, NumPy, SciPy, TensorBoard, tqdm |
-| Validation stack | Node.js using the same `coach/web/analyzer.js` and WASM model path |
+| Axis | What it reports | Implementation |
+|---|---|---|
+| Pitch | voiced percent, median f0, median note, range, stability | NanoPitch WASM pitch/VAD model |
+| Tempo | onset count, estimated BPM, onset spacing | browser DSP novelty + autocorrelation |
+| Dynamics | average/peak loudness and dynamic range | RMS dBFS contour |
+| Technique | detected technique family, confidence, frame-level technique scores | local PyTorch API |
 
-Large raw datasets are not committed. The repo includes download scripts,
-evaluation summaries, browser deployment assets, and the packaged demo
-technique checkpoint.
+## Data And Models
+
+| Component | Data / model source | How we used it |
+|---|---|---|
+| Pitch/VAD | GTSinger vocal data | training audio for the browser pitch/VAD model |
+| Pitch labels | RMVPE-derived f0 labels | label generation, not live inference |
+| Noise robustness | FSDNoisy18k environmental noise | random-SNR augmentation during pitch/VAD training |
+| Technique | GT Singer English technique/control data | trained the packaged technique checkpoint |
+| Technique expansion plan | VocalSet, DAMP-style recordings, app recordings | documented and scaffolded, but not used in the submitted checkpoint |
+
+The pitch/VAD model is our NanoPitch causal conv + GRU model exported to
+`deployment/web/model.json` for browser inference.
+
+The technique model is a custom GT Singer technique classifier in
+`server/technique/gt_singer_grader/`. It is not an off-the-shelf pretrained
+technique model. The submitted checkpoint is packaged at:
+
+```text
+server/technique/gt_singer_grader/models/technique_demo_best.pth
+```
+
+## Libraries Used
+
+- Browser app: JavaScript, Web Audio API, Canvas, WebAssembly
+- Pitch/VAD deployment: NanoPitch WASM runtime in `deployment/web/`
+- Technique model/API: Python, PyTorch, NumPy, SciPy
+- Training workflow: TensorBoard and tqdm
+- Validation: Node.js, Python `unittest`, GitHub Actions
+
+## Development Approach
+
+We built the project in stages:
+
+1. Record a clean browser WAV from the microphone.
+2. Run the existing NanoPitch model in-browser for frame-level VAD and pitch.
+3. Build the first three report axes locally: pitch, tempo, and dynamics.
+4. Add the fourth axis by sending the same WAV to a local technique API.
+5. Keep the report shape consistent so all axes render as the same kind of
+   feedback card.
+6. Add no-data validation checks, manifest tooling, and documentation so the
+   full project is reproducible from GitHub.
 
 ## Accuracy And Testing
 
-### NanoPitch Evaluation
-
-We implemented log-domain random-SNR noise augmentation in
-`training/train.py`. On the 600-clip NanoPitch held-out test set:
-
-| Metric | Baseline | Augmented model |
-|---|---:|---:|
-| Overall VAD accuracy | 86.8% | 94.9% |
-| Offline raw pitch accuracy | 91.8% | 90.7% |
-| Realtime raw pitch accuracy | 89.8% | 87.8% |
-| -5 dB median pitch error | 73.2 cents | 47.1 cents |
-
-Interpretation: the model got much better at detecting singing vs. silence in
-noise, with a small pitch-accuracy tradeoff.
-
-### Browser Validation
+### Browser Axis Validation
 
 Run:
 
@@ -108,7 +121,7 @@ Run:
 node validation/run_validation.js
 ```
 
-Current result: all 4 synthetic fixtures pass.
+Current browser-path validation passes all 4 synthetic fixtures:
 
 | Fixture | Expected | Actual |
 |---|---|---|
@@ -117,44 +130,72 @@ Current result: all 4 synthetic fixtures pass.
 | `dynamics_constant` | low contrast | 0.7 dB range |
 | `dynamics_soft_loud_soft` | clear contrast | 13.8 dB range |
 
+### Pitch/VAD Model
+
+We added log-domain random-SNR noise augmentation in `training/train.py`. On
+the 600-clip NanoPitch held-out test set:
+
+| Metric | Baseline | Augmented model |
+|---|---:|---:|
+| Overall VAD accuracy | 86.8% | 94.9% |
+| Offline raw pitch accuracy | 91.8% | 90.7% |
+| Realtime raw pitch accuracy | 89.8% | 87.8% |
+| -5 dB median pitch error | 73.2 cents | 47.1 cents |
+
+The main gain was better singing-vs-silence detection under noise. The tradeoff
+was a small drop in raw pitch accuracy.
+
 ### Technique Model
 
-The submitted technique axis uses a packaged GT Singer English checkpoint at
-`server/technique/gt_singer_grader/models/technique_demo_best.pth`. It reports
-detected technique family, confidence, dominant frame-level technique scores,
-and a coarse timeline. The checkpoint metadata reports 65.8% clip accuracy and
-0.497 technique macro F1 on its held-out validation split.
+The submitted technique checkpoint was trained on GT Singer English data:
 
-This is the final fourth axis for the class project, but it is still
-detection-first. We do not claim that it is a production vocal-coaching judge:
-it has not yet been validated on a large set of real NanoPitch app recordings.
+- best epoch: 76
+- validation split: 10%
+- clip accuracy: 65.8%
+- technique macro F1: 0.497
 
-## Repo Map
+The technique axis is fully integrated and runnable, but it is the least mature
+part of the project. The main issue was data quality and time: we did not have
+enough high-quality, labeled app-style WAV recordings to train and validate a
+reliable user-recording technique model. Public datasets help, but they do not
+perfectly match our target app recordings or technique taxonomy.
+
+What we added instead:
+
+- GT Singer baseline training/inference workflow
+- app-recording label templates
+- manifest builders and validators
+- dataset strategy for VocalSet, DAMP-style recordings, and future app data
+- packaging and verification tooling for future improved checkpoints
+
+So the submitted technique model should be treated as a working demo-grade
+fourth axis, not a production vocal-technique judge.
+
+## Submitted GitHub Contents
+
+Everything needed for the class project is on `main`:
 
 | Path | Purpose |
 |---|---|
-| `coach/web/` | main Project 2 browser UI |
+| `coach/web/` | browser UI and four-axis report |
 | `deployment/web/` | NanoPitch WASM runtime and browser model |
-| `server/technique/` | local technique API and GT Singer technique-model workflow |
-| `training/` | NanoPitch model, training, and evaluation code |
-| `validation/` | synthetic browser-path validation harness |
-| `RESULTS.md` | detailed NanoPitch augmentation results |
-| `coach/COACH.md` | longer roadmap for future song/reference grading |
+| `server/technique/` | local technique API |
+| `server/technique/gt_singer_grader/` | technique model, checkpoint, training/evaluation workflow |
+| `training/` | NanoPitch pitch/VAD training code |
+| `validation/` | synthetic validation harness |
+| `.github/workflows/` | light CI check |
+| `RESULTS.md` | detailed pitch/VAD augmentation results |
 
-Ignored local folders such as `.venv/`, `data/`, `NanoPitch-technique/`,
-`validation/audio/`, and `validation/results/` are not submission artifacts.
+Large raw datasets are not committed. The repo includes code, packaged browser
+assets, the packaged technique demo checkpoint, documentation, and validation
+tooling.
 
-## Thursday Demo Script
+## Demo Script
 
-1. Start `python3 -m http.server 8080`.
-2. Open `http://127.0.0.1:8080/coach/web/`.
-3. Record a 10-15 second take with a sustained note, clear attacks, and one
-   louder section.
-4. Show that the same recorded WAV drives every report card.
-5. Point out median note/f0, voiced percent, BPM/onsets, and dynamics range.
-6. Show the technique card from the local technique API: detected family,
-   confidence, dominant technique scores, and target match if a focus technique
-   is selected.
-7. Close with the key limitation: this is detection feedback, not full song
-   grading yet. Full grading needs a MIDI score, reference take, or authored
-   target.
+1. Run `python3 -m http.server 8080`.
+2. Run `make technique-api` in a second terminal.
+3. Open `http://127.0.0.1:8080/coach/web/`.
+4. Record a 10-15 second singing take.
+5. Show that the same recording drives pitch, tempo, dynamics, and technique.
+6. Explain the key limitation: technique detection works end-to-end, but needs
+   more labeled app-style WAVs before it can be called accurate.
