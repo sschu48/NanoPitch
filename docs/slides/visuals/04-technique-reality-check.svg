@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Technique model reality check</title>
+  <desc id="desc">Current technique model trained on GT Singer English with 65.8 percent clip accuracy and future need for more app-style labeled WAVs.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto">
+      <path d="M0,0 L14,7 L0,14 Z" fill="#151515"/>
+    </marker>
+  </defs>
+  <rect width="1600" height="900" fill="#f7f5ef"/>
+  <text x="105" y="105" font-family="Inter, Arial, sans-serif" font-size="54" font-weight="800" fill="#151515">Technique Axis: Honest Status</text>
+  <text x="105" y="155" font-family="Inter, Arial, sans-serif" font-size="25" fill="#605f5a">Integrated and runnable, but limited by labeled app-style audio.</text>
+
+  <g font-family="Inter, Arial, sans-serif">
+    <g transform="translate(105 245)">
+      <rect width="610" height="430" rx="22" fill="#ffffff" stroke="#d8d3c8" stroke-width="3"/>
+      <text x="42" y="64" font-size="34" font-weight="800" fill="#151515">Submitted Model</text>
+      <text x="42" y="106" font-size="24" fill="#605f5a">GT Singer English checkpoint</text>
+      <line x1="42" y1="135" x2="568" y2="135" stroke="#d8d3c8" stroke-width="3"/>
+      <text x="42" y="195" font-size="28" fill="#151515">Best epoch</text>
+      <text x="462" y="195" font-size="31" font-weight="800" fill="#151515">76</text>
+      <text x="42" y="255" font-size="28" fill="#151515">Clip accuracy</text>
+      <text x="430" y="255" font-size="31" font-weight="800" fill="#b83b4b">65.8%</text>
+      <text x="42" y="315" font-size="28" fill="#151515">Technique macro F1</text>
+      <text x="442" y="315" font-size="31" font-weight="800" fill="#b83b4b">0.497</text>
+      <rect x="42" y="352" width="526" height="48" rx="12" fill="#fae8eb"/>
+      <text x="305" y="384" text-anchor="middle" font-size="23" font-weight="800" fill="#8f2230">Demo-grade fourth axis</text>
+    </g>
+
+    <line x1="760" y1="460" x2="875" y2="460" stroke="#151515" stroke-width="6" marker-end="url(#arrow)"/>
+    <text x="818" y="420" text-anchor="middle" font-size="24" fill="#605f5a">needs</text>
+
+    <g transform="translate(905 245)">
+      <rect width="590" height="430" rx="22" fill="#ffffff" stroke="#d8d3c8" stroke-width="3"/>
+      <text x="42" y="64" font-size="34" font-weight="800" fill="#151515">Next Training Step</text>
+      <text x="42" y="106" font-size="24" fill="#605f5a">Better target-domain labels</text>
+      <line x1="42" y1="135" x2="548" y2="135" stroke="#d8d3c8" stroke-width="3"/>
+
+      <g font-size="27" fill="#151515">
+        <circle cx="58" cy="183" r="10" fill="#257d6b"/>
+        <text x="82" y="192">More app-style WAVs</text>
+        <circle cx="58" cy="238" r="10" fill="#257d6b"/>
+        <text x="82" y="247">Human technique labels</text>
+        <circle cx="58" cy="293" r="10" fill="#257d6b"/>
+        <text x="82" y="302">More singers, mics, rooms</text>
+        <circle cx="58" cy="348" r="10" fill="#257d6b"/>
+        <text x="82" y="357">Fine-tune and validate</text>
+      </g>
+
+      <rect x="42" y="378" width="506" height="36" rx="10" fill="#e6f3ef"/>
+      <text x="295" y="403" text-anchor="middle" font-size="21" font-weight="800" fill="#1f6d5d">Goal: reliable user-recording detection</text>
+    </g>
+  </g>
+</svg>

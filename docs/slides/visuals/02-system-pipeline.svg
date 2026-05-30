@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">NanoPitch system pipeline</title>
+  <desc id="desc">Pipeline diagram from microphone to WAV to browser model to technique API to four-axis report.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto">
+      <path d="M0,0 L14,7 L0,14 Z" fill="#151515"/>
+    </marker>
+  </defs>
+  <rect width="1600" height="900" fill="#f7f5ef"/>
+  <text x="105" y="105" font-family="Inter, Arial, sans-serif" font-size="54" font-weight="800" fill="#151515">How It Works</text>
+  <text x="105" y="155" font-family="Inter, Arial, sans-serif" font-size="25" fill="#605f5a">The same recorded WAV drives every feedback axis.</text>
+
+  <g font-family="Inter, Arial, sans-serif">
+    <g transform="translate(90 320)">
+      <rect width="225" height="170" rx="18" fill="#ffffff" stroke="#d8d3c8" stroke-width="3"/>
+      <circle cx="112" cy="63" r="34" fill="#e6f3ef"/>
+      <path d="M112 37 v52 M92 61 c0 34 40 34 40 0 M112 89 v24 M92 113 h40" stroke="#257d6b" stroke-width="8" fill="none" stroke-linecap="round"/>
+      <text x="112" y="132" text-anchor="middle" font-size="28" font-weight="800" fill="#151515">Microphone</text>
+    </g>
+
+    <line x1="345" y1="405" x2="485" y2="405" stroke="#151515" stroke-width="5" marker-end="url(#arrow)"/>
+
+    <g transform="translate(505 320)">
+      <rect width="225" height="170" rx="18" fill="#ffffff" stroke="#d8d3c8" stroke-width="3"/>
+      <rect x="62" y="45" width="102" height="54" rx="8" fill="#faeee8" stroke="#d36a3d" stroke-width="5"/>
+      <path d="M78 72 h12 l10 -16 l16 35 l13 -21 h20" stroke="#d36a3d" stroke-width="6" fill="none" stroke-linecap="round"/>
+      <text x="112" y="132" text-anchor="middle" font-size="28" font-weight="800" fill="#151515">16 kHz WAV</text>
+    </g>
+
+    <line x1="760" y1="405" x2="900" y2="405" stroke="#151515" stroke-width="5" marker-end="url(#arrow)"/>
+
+    <g transform="translate(920 240)">
+      <rect width="290" height="330" rx="18" fill="#ffffff" stroke="#d8d3c8" stroke-width="3"/>
+      <text x="145" y="58" text-anchor="middle" font-size="30" font-weight="800" fill="#151515">Browser Analysis</text>
+      <text x="145" y="92" text-anchor="middle" font-size="20" fill="#605f5a">WASM + JavaScript</text>
+      <g font-size="24" fill="#151515">
+        <rect x="45" y="125" width="200" height="44" rx="10" fill="#e6f3ef"/>
+        <text x="145" y="154" text-anchor="middle">Pitch</text>
+        <rect x="45" y="184" width="200" height="44" rx="10" fill="#faeee8"/>
+        <text x="145" y="213" text-anchor="middle">Tempo</text>
+        <rect x="45" y="243" width="200" height="44" rx="10" fill="#eeeafa"/>
+        <text x="145" y="272" text-anchor="middle">Dynamics</text>
+      </g>
+    </g>
+
+    <path d="M1065 570 C1065 650 1220 650 1220 570" fill="none" stroke="#151515" stroke-width="5" marker-end="url(#arrow)"/>
+
+    <g transform="translate(1235 320)">
+      <rect width="260" height="170" rx="18" fill="#ffffff" stroke="#d8d3c8" stroke-width="3"/>
+      <text x="130" y="66" text-anchor="middle" font-size="30" font-weight="800" fill="#151515">Technique API</text>
+      <text x="130" y="102" text-anchor="middle" font-size="21" fill="#605f5a">PyTorch model</text>
+      <text x="130" y="135" text-anchor="middle" font-size="21" fill="#605f5a">/analyze</text>
+    </g>
+
+    <line x1="1365" y1="505" x2="1365" y2="610" stroke="#151515" stroke-width="5" marker-end="url(#arrow)"/>
+
+    <g transform="translate(1145 640)">
+      <rect width="440" height="120" rx="18" fill="#151515"/>
+      <text x="220" y="47" text-anchor="middle" font-size="30" font-weight="800" fill="#ffffff">Unified Report</text>
+      <text x="220" y="84" text-anchor="middle" font-size="23" fill="#d8d3c8">Pitch + Tempo + Dynamics + Technique</text>
+    </g>
+  </g>
+</svg>

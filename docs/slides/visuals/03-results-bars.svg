@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">NanoPitch results bar chart</title>
+  <desc id="desc">Bar chart showing voice detection improved from 86.8 percent to 94.9 percent and -5 dB pitch error improved from 73.2 cents to 47.1 cents.</desc>
+  <rect width="1600" height="900" fill="#f7f5ef"/>
+  <text x="105" y="105" font-family="Inter, Arial, sans-serif" font-size="54" font-weight="800" fill="#151515">Results Snapshot</text>
+  <text x="105" y="155" font-family="Inter, Arial, sans-serif" font-size="25" fill="#605f5a">Noise augmentation made voice detection much more robust.</text>
+
+  <g font-family="Inter, Arial, sans-serif">
+    <text x="145" y="260" font-size="34" font-weight="800" fill="#151515">Voice Detection Accuracy</text>
+    <text x="145" y="300" font-size="23" fill="#605f5a">600-clip held-out NanoPitch test set</text>
+    <rect x="145" y="345" width="1130" height="58" rx="14" fill="#e8e3d8"/>
+    <rect x="145" y="345" width="981" height="58" rx="14" fill="#8f8a80"/>
+    <text x="1320" y="385" font-size="30" font-weight="800" fill="#151515">86.8%</text>
+    <text x="145" y="333" font-size="24" fill="#605f5a">Baseline</text>
+
+    <rect x="145" y="475" width="1130" height="58" rx="14" fill="#e8e3d8"/>
+    <rect x="145" y="475" width="1072" height="58" rx="14" fill="#257d6b"/>
+    <text x="1320" y="515" font-size="30" font-weight="800" fill="#151515">94.9%</text>
+    <text x="145" y="463" font-size="24" fill="#605f5a">Random-SNR augmented</text>
+
+    <g transform="translate(145 625)">
+      <rect width="390" height="145" rx="18" fill="#ffffff" stroke="#d8d3c8" stroke-width="3"/>
+      <text x="34" y="45" font-size="24" fill="#605f5a">Improvement</text>
+      <text x="34" y="100" font-size="46" font-weight="800" fill="#257d6b">+8.1 pts</text>
+    </g>
+
+    <g transform="translate(585 625)">
+      <rect width="430" height="145" rx="18" fill="#ffffff" stroke="#d8d3c8" stroke-width="3"/>
+      <text x="34" y="45" font-size="24" fill="#605f5a">-5 dB median pitch error</text>
+      <text x="34" y="100" font-size="42" font-weight="800" fill="#151515">73.2 -> 47.1 cents</text>
+    </g>
+
+    <g transform="translate(1065 625)">
+      <rect width="390" height="145" rx="18" fill="#ffffff" stroke="#d8d3c8" stroke-width="3"/>
+      <text x="34" y="45" font-size="24" fill="#605f5a">Browser validation</text>
+      <text x="34" y="100" font-size="46" font-weight="800" fill="#151515">4 / 4 pass</text>
+    </g>
+  </g>
+</svg>
