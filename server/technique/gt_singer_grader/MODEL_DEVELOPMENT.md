@@ -34,6 +34,12 @@ The current `TechniqueGraderModel` already follows this shape. Do not replace
 it with a large pretrained encoder until the simple model has a clear failure
 mode on speaker-held-out GT Singer and app-recording validation.
 
+If the Conv-GRU baseline is not accurate enough, the next architecture
+candidate is a small non-causal band/time-frequency RoFormer-style classifier,
+not a full source-separation model. See
+[`ROFORMER_TECHNIQUE_PLAN.md`](ROFORMER_TECHNIQUE_PLAN.md) for the objective
+goals, non-goals, experiment phases, and promotion gates.
+
 The deployment contract is detection-first:
 
 - the clip head provides a stable family summary
