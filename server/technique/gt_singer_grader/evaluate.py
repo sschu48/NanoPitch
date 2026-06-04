@@ -10,7 +10,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from .constants import FAMILY_NAMES, PRIMARY_FAMILY_TO_TECHNIQUES
+from .constants import FAMILY_NAMES, PRIMARY_FAMILY_TO_TECHNIQUES, TECHNIQUE_KEYS
 from .manifest import normalize_label_list, require_non_empty_records, validate_record
 from .run_metadata import collect_run_metadata, file_metadata
 
@@ -145,6 +145,27 @@ def gold_techniques_for_family(family: str) -> set[str]:
     return set(PRIMARY_FAMILY_TO_TECHNIQUES.get(family, ()))
 
 
+def gold_techniques(record: dict[str, Any], family: str | None = None) -> set[str]:
+    labels = record.get("labels")
+    if isinstance(labels, dict):
+        techniques = {
+            str(technique)
+            for technique in normalize_label_list(labels.get("techniques"))
+            if str(technique) in TECHNIQUE_KEYS
+        }
+        if techniques:
+            return techniques
+    return gold_techniques_for_family(family or gold_family(record))
+
+
+def record_song_id(record: dict[str, Any], *, fallback: str) -> str:
+    for key in ("song_id", "song", "track_id", "recording_id", "stem"):
+        value = record.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return fallback
+
+
 def predicted_family_with_thresholds(
     row: dict[str, Any],
     *,
@@ -203,12 +224,12 @@ def macro_f1(rows: list[dict[str, Any]], label_key: str = "predicted_family") ->
 
 
 def technique_macro_f1(rows: list[dict[str, Any]], technique_threshold: float = 0.30) -> float | None:
-    technique_names = sorted({tech for family in FAMILY_NAMES for tech in gold_techniques_for_family(family)})
+    technique_names = list(TECHNIQUE_KEYS)
     scores: list[float] = []
     for technique in technique_names:
         tp = fp = fn = 0
         for row in rows:
-            gold = technique in gold_techniques_for_family(str(row["gold_family"]))
+            gold = technique in set(row.get("gold_techniques") or gold_techniques_for_family(str(row["gold_family"])))
             pred = float(row["technique_scores"].get(technique, 0.0)) >= technique_threshold
             tp += int(gold and pred)
             fp += int(not gold and pred)
@@ -217,6 +238,192 @@ def technique_macro_f1(rows: list[dict[str, Any]], technique_threshold: float = 
         if denom:
             scores.append((2 * tp) / denom)
     return sum(scores) / len(scores) if scores else None
+
+
+def safe_rate(numerator: int, denominator: int) -> float | None:
+    return numerator / denominator if denominator else None
+
+
+def f1_from_counts(tp: int, fp: int, fn: int) -> float | None:
+    denom = 2 * tp + fp + fn
+    return (2 * tp) / denom if denom else None
+
+
+def average_precision(scores: list[tuple[float, bool]]) -> float | None:
+    positives = sum(1 for _score, gold in scores if gold)
+    if not positives:
+        return None
+    ranked = sorted(scores, key=lambda item: item[0], reverse=True)
+    hits = 0
+    precision_sum = 0.0
+    for rank, (_score, gold) in enumerate(ranked, start=1):
+        if gold:
+            hits += 1
+            precision_sum += hits / rank
+    return precision_sum / positives
+
+
+def technique_detection_report(
+    rows: list[dict[str, Any]],
+    technique_thresholds: list[float],
+) -> dict[str, Any]:
+    techniques: dict[str, Any] = {}
+    macro_by_threshold: list[dict[str, Any]] = []
+
+    for technique in TECHNIQUE_KEYS:
+        score_gold_pairs = [
+            (
+                float(row.get("technique_scores", {}).get(technique, 0.0)),
+                technique in set(row.get("gold_techniques") or ()),
+            )
+            for row in rows
+        ]
+        support = sum(1 for _score, gold in score_gold_pairs if gold)
+        negative_support = len(score_gold_pairs) - support
+        threshold_rows: list[dict[str, Any]] = []
+        for threshold in technique_thresholds:
+            tp = fp = tn = fn = 0
+            for score, gold in score_gold_pairs:
+                pred = score >= threshold
+                tp += int(gold and pred)
+                fp += int(not gold and pred)
+                tn += int(not gold and not pred)
+                fn += int(gold and not pred)
+            threshold_rows.append(
+                {
+                    "threshold": threshold,
+                    "true_positive": tp,
+                    "false_positive": fp,
+                    "true_negative": tn,
+                    "false_negative": fn,
+                    "precision": safe_rate(tp, tp + fp),
+                    "recall": safe_rate(tp, tp + fn),
+                    "f1": f1_from_counts(tp, fp, fn),
+                    "false_positive_rate": safe_rate(fp, fp + tn),
+                }
+            )
+        best = max(
+            threshold_rows,
+            key=lambda row: (
+                -1.0 if row["f1"] is None else float(row["f1"]),
+                -1.0 if row["precision"] is None else float(row["precision"]),
+                -float(row["false_positive_rate"] or 0.0),
+                -float(row["threshold"]),
+            ),
+        )
+        techniques[technique] = {
+            "support": support,
+            "negative_support": negative_support,
+            "average_precision": average_precision(score_gold_pairs),
+            "best_threshold": best["threshold"],
+            "best_f1": best["f1"],
+            "best_precision": best["precision"],
+            "best_recall": best["recall"],
+            "best_false_positive_rate": best["false_positive_rate"],
+            "thresholds": threshold_rows,
+        }
+
+    for threshold in technique_thresholds:
+        threshold_metrics = [
+            row
+            for technique in techniques.values()
+            for row in technique["thresholds"]
+            if row["threshold"] == threshold and row["f1"] is not None
+        ]
+        macro_by_threshold.append(
+            {
+                "threshold": threshold,
+                "macro_precision": (
+                    sum(float(row["precision"]) for row in threshold_metrics if row["precision"] is not None)
+                    / len([row for row in threshold_metrics if row["precision"] is not None])
+                    if any(row["precision"] is not None for row in threshold_metrics)
+                    else None
+                ),
+                "macro_recall": (
+                    sum(float(row["recall"]) for row in threshold_metrics if row["recall"] is not None)
+                    / len([row for row in threshold_metrics if row["recall"] is not None])
+                    if any(row["recall"] is not None for row in threshold_metrics)
+                    else None
+                ),
+                "macro_f1": (
+                    sum(float(row["f1"]) for row in threshold_metrics if row["f1"] is not None)
+                    / len([row for row in threshold_metrics if row["f1"] is not None])
+                    if any(row["f1"] is not None for row in threshold_metrics)
+                    else None
+                ),
+                "macro_false_positive_rate": (
+                    sum(float(row["false_positive_rate"]) for row in threshold_metrics if row["false_positive_rate"] is not None)
+                    / len([row for row in threshold_metrics if row["false_positive_rate"] is not None])
+                    if any(row["false_positive_rate"] is not None for row in threshold_metrics)
+                    else None
+                ),
+            }
+        )
+
+    return {
+        "technique_thresholds": technique_thresholds,
+        "techniques": techniques,
+        "macro_by_threshold": macro_by_threshold,
+    }
+
+
+def song_detection_report(
+    rows: list[dict[str, Any]],
+    *,
+    technique_threshold: float = 0.30,
+) -> dict[str, Any]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(str(row.get("song_id") or row["recording_id"]), []).append(row)
+
+    songs: list[dict[str, Any]] = []
+    for song_id, song_rows in sorted(grouped.items()):
+        gold = sorted({technique for row in song_rows for technique in row.get("gold_techniques", [])})
+        scores = {
+            technique: max(float(row.get("technique_scores", {}).get(technique, 0.0)) for row in song_rows)
+            for technique in TECHNIQUE_KEYS
+        }
+        predicted = sorted(technique for technique, score in scores.items() if score >= technique_threshold)
+        songs.append(
+            {
+                "song_id": song_id,
+                "clips": len(song_rows),
+                "gold_techniques": gold,
+                "predicted_techniques": predicted,
+                "technique_scores": scores,
+            }
+        )
+
+    technique_rows: dict[str, dict[str, Any]] = {}
+    for technique in TECHNIQUE_KEYS:
+        tp = fp = tn = fn = 0
+        for song in songs:
+            gold = technique in song["gold_techniques"]
+            pred = technique in song["predicted_techniques"]
+            tp += int(gold and pred)
+            fp += int(not gold and pred)
+            tn += int(not gold and not pred)
+            fn += int(gold and not pred)
+        technique_rows[technique] = {
+            "support": tp + fn,
+            "negative_support": fp + tn,
+            "true_positive": tp,
+            "false_positive": fp,
+            "true_negative": tn,
+            "false_negative": fn,
+            "precision": safe_rate(tp, tp + fp),
+            "recall": safe_rate(tp, tp + fn),
+            "f1": f1_from_counts(tp, fp, fn),
+            "false_positive_rate": safe_rate(fp, fp + tn),
+        }
+
+    valid_f1 = [float(row["f1"]) for row in technique_rows.values() if row["f1"] is not None]
+    return {
+        "technique_threshold": technique_threshold,
+        "songs": songs,
+        "techniques": technique_rows,
+        "macro_f1": sum(valid_f1) / len(valid_f1) if valid_f1 else None,
+    }
 
 
 def false_positive_rate(
@@ -384,6 +591,7 @@ def write_predictions_csv(path: str | Path, rows: list[dict[str, Any]]) -> None:
         "recording_id",
         "audio_path",
         "gold_family",
+        "gold_techniques",
         "predicted_family",
         "detected_confidence",
         "family_margin",
@@ -403,6 +611,7 @@ def write_predictions_csv(path: str | Path, rows: list[dict[str, Any]]) -> None:
                     "recording_id": row["recording_id"],
                     "audio_path": row["audio_path"],
                     "gold_family": row["gold_family"],
+                    "gold_techniques": ",".join(row.get("gold_techniques") or []),
                     "predicted_family": row["predicted_family"],
                     "detected_confidence": row["detected_confidence"],
                     "family_margin": row["family_margin"],
@@ -412,6 +621,71 @@ def write_predictions_csv(path: str | Path, rows: list[dict[str, Any]]) -> None:
                     "voiced_ratio": row["voiced_ratio"],
                     "top2_families": ",".join(row["ranked_families"][:2]),
                     "technique_scores_json": json.dumps(row["technique_scores"], sort_keys=True),
+                }
+            )
+
+
+def write_technique_detection_csv(path: str | Path, report: dict[str, Any]) -> None:
+    fieldnames = [
+        "technique",
+        "threshold",
+        "support",
+        "negative_support",
+        "precision",
+        "recall",
+        "f1",
+        "false_positive_rate",
+        "average_precision",
+        "true_positive",
+        "false_positive",
+        "true_negative",
+        "false_negative",
+    ]
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for technique, payload in report.get("techniques", {}).items():
+            for row in payload.get("thresholds", []):
+                writer.writerow(
+                    {
+                        "technique": technique,
+                        "threshold": row["threshold"],
+                        "support": payload["support"],
+                        "negative_support": payload["negative_support"],
+                        "precision": row["precision"],
+                        "recall": row["recall"],
+                        "f1": row["f1"],
+                        "false_positive_rate": row["false_positive_rate"],
+                        "average_precision": payload["average_precision"],
+                        "true_positive": row["true_positive"],
+                        "false_positive": row["false_positive"],
+                        "true_negative": row["true_negative"],
+                        "false_negative": row["false_negative"],
+                    }
+                )
+
+
+def write_song_detection_csv(path: str | Path, report: dict[str, Any]) -> None:
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "song_id",
+                "clips",
+                "gold_techniques",
+                "predicted_techniques",
+                "technique_scores_json",
+            ],
+        )
+        writer.writeheader()
+        for song in report.get("songs", []):
+            writer.writerow(
+                {
+                    "song_id": song["song_id"],
+                    "clips": song["clips"],
+                    "gold_techniques": ",".join(song["gold_techniques"]),
+                    "predicted_techniques": ",".join(song["predicted_techniques"]),
+                    "technique_scores_json": json.dumps(song["technique_scores"], sort_keys=True),
                 }
             )
 
@@ -487,8 +761,10 @@ def main() -> None:
         ]
         row = {
             "recording_id": record.get("recording_id") or record.get("stem") or f"record-{index}",
+            "song_id": record_song_id(record, fallback=f"record-{index}"),
             "audio_path": audio_path,
             "gold_family": family,
+            "gold_techniques": sorted(gold_techniques(record, family)),
             "predicted_family": summary.get("detected_family"),
             "detected_confidence": float(summary.get("detected_confidence", 0.0)),
             "family_margin": float(summary.get("family_margin", 0.0)),
@@ -532,9 +808,17 @@ def main() -> None:
     )
     matrix = compute_confusion(rows)
     calibration = confidence_calibration(rows, bins=args.calibration_bins)
+    technique_report = technique_detection_report(rows, technique_thresholds)
+    selected_technique_threshold = (
+        float(operating_point["technique_threshold"])
+        if isinstance(operating_point, dict) and operating_point.get("technique_threshold") is not None
+        else 0.30
+    )
+    song_report = song_detection_report(rows, technique_threshold=selected_technique_threshold)
     metrics["expected_calibration_error"] = calibration["expected_calibration_error"]
     metrics["maximum_calibration_error"] = calibration["maximum_calibration_error"]
     metrics["selected_operating_point"] = operating_point
+    metrics["song_detection_macro_f1"] = song_report["macro_f1"]
     evaluation_config = build_evaluation_config(args, examples=len(rows))
 
     write_json(output_dir / "evaluation_config.json", evaluation_config)
@@ -542,9 +826,13 @@ def main() -> None:
     write_json(output_dir / "threshold_sweep.json", {"results": sweep})
     write_json(output_dir / "operating_point.json", operating_point or {})
     write_json(output_dir / "calibration.json", calibration)
+    write_json(output_dir / "technique_detection.json", technique_report)
+    write_json(output_dir / "song_detection.json", song_report)
     write_predictions_csv(output_dir / "predictions.csv", rows)
     write_confusion_csv(output_dir / "confusion_matrix.csv", matrix)
     write_calibration_csv(output_dir / "calibration.csv", calibration)
+    write_technique_detection_csv(output_dir / "technique_detection.csv", technique_report)
+    write_song_detection_csv(output_dir / "song_detection.csv", song_report)
     print(json.dumps(metrics, indent=2, sort_keys=True))
 
 

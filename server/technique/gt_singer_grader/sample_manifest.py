@@ -9,7 +9,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from .manifest import normalize_label_list, read_jsonl, summarize_records, validate_record, write_jsonl
+from .constants import FAMILY_NAMES
+from .manifest import normalize_label_list, read_jsonl, validate_record, write_jsonl
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,7 +32,17 @@ def _require_positive_int(value: int | None, *, name: str) -> None:
 def validate_records(records: list[dict[str, Any]]) -> None:
     errors: list[str] = []
     for index, record in enumerate(records, start=1):
-        errors.extend(validate_record(record, line_number=index))
+        if isinstance(record.get("labels"), dict):
+            errors.extend(validate_record(record, line_number=index))
+            continue
+        try:
+            record_audio_path(record)
+            record_family(record)
+        except ValueError as exc:
+            errors.append(f"line {index}: {exc}")
+        split_group = record.get("split_group")
+        if not isinstance(split_group, str) or not split_group:
+            errors.append(f"line {index}: split_group must be a non-empty string")
     if errors:
         for error in errors:
             print(error)
@@ -39,17 +50,47 @@ def validate_records(records: list[dict[str, Any]]) -> None:
 
 
 def record_family(record: dict[str, Any]) -> str:
-    if record.get("role") in {"control", "speech"}:
-        return "control"
-    family = record.get("family")
-    if isinstance(family, str) and family:
-        return family
     labels = record.get("labels")
     if isinstance(labels, dict):
         families = normalize_label_list(labels.get("families"))
         if families:
             return families[0]
+    if record.get("role") in {"control", "speech"}:
+        return "control"
+    family = record.get("family")
+    if isinstance(family, str) and family:
+        return family
     raise ValueError(f"manifest record has no family label: {record.get('recording_id') or record.get('stem')}")
+
+
+def record_audio_path(record: dict[str, Any]) -> str:
+    audio_path = record.get("audio_path") or record.get("wav_path")
+    if not isinstance(audio_path, str) or not audio_path:
+        raise ValueError(f"manifest record has no audio path: {record.get('recording_id') or record.get('stem')}")
+    return audio_path
+
+
+def summarize_sampled_records(records: list[dict[str, Any]]) -> dict[str, Any]:
+    family_counts: dict[str, int] = defaultdict(int)
+    dataset_counts: dict[str, int] = defaultdict(int)
+    trainability_counts: dict[str, int] = defaultdict(int)
+    trainable_families = set(FAMILY_NAMES)
+
+    for record in records:
+        family = record_family(record)
+        family_counts[family] += 1
+        dataset_counts[str(record.get("dataset") or "unknown")] += 1
+        if family in trainable_families:
+            trainability_counts["trainable"] += 1
+        else:
+            trainability_counts[f"evaluation_only_family:{family}"] += 1
+
+    return {
+        "records": len(records),
+        "datasets": dict(sorted(dataset_counts.items())),
+        "families": dict(sorted(family_counts.items())),
+        "trainability": dict(sorted(trainability_counts.items())),
+    }
 
 
 def sample_records(
@@ -104,8 +145,8 @@ def sample_records(
         "seed": seed,
         "max_records": max_records,
         "max_per_family": max_per_family,
-        "input_summary": summarize_records(records),
-        "sampled_summary": summarize_records(sampled),
+        "input_summary": summarize_sampled_records(records),
+        "sampled_summary": summarize_sampled_records(sampled),
     }
     return sampled, summary
 

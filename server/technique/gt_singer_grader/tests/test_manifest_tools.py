@@ -28,6 +28,8 @@ from gt_singer_grader.evaluate import (
     predicted_family_with_thresholds,
     require_probability,
     select_operating_point,
+    song_detection_report,
+    technique_detection_report,
     threshold_sweep,
     top_k_accuracy,
     validate_eval_records,
@@ -2203,6 +2205,28 @@ class ManifestToolsTest(unittest.TestCase):
         self.assertEqual(len(sampled), 5)
         self.assertEqual(summary["sampled_summary"]["families"], {"breathy": 2, "control": 2, "vibrato": 1})
 
+    def test_sample_manifest_accepts_legacy_training_records(self) -> None:
+        records = []
+        for family in ("breathy", "control", "vibrato"):
+            for index in range(3):
+                records.append(
+                    {
+                        "speaker": "EN-Alto-1",
+                        "family": family,
+                        "role": "control" if family == "control" else "emphasis",
+                        "song": "fixture song",
+                        "stem": f"{family}_{index}",
+                        "wav_path": f"gt_singer_grader/data/GTSinger/{family}_{index}.wav",
+                        "json_path": f"gt_singer_grader/data/GTSinger/{family}_{index}.json",
+                        "split_group": f"EN-Alto-1|{family}|fixture song",
+                    }
+                )
+
+        sampled, summary = sample_records(records, seed=11, max_records=4)
+
+        self.assertEqual(len(sampled), 4)
+        self.assertEqual(summary["sampled_summary"]["families"], {"breathy": 2, "control": 1, "vibrato": 1})
+
     def test_dataset_strategy_classifies_training_validation_and_review_sources(self) -> None:
         report = audit_registry(
             [
@@ -3304,6 +3328,83 @@ class ManifestToolsTest(unittest.TestCase):
         self.assertEqual(candidate_report["promotion"]["failed_gates"], [])
         self.assertEqual(candidate_report["promotion"]["unknown_gates"], [])
 
+    def test_compare_runs_includes_optional_technique_detection_deltas(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            baseline = root / "baseline"
+            candidate = root / "candidate"
+            write_eval_artifacts(baseline)
+            write_eval_artifacts(candidate)
+            metrics = {
+                "top2_accuracy": 0.7,
+                "clip_macro_f1": 0.45,
+                "control_false_positive_rate": 0.1,
+                "non_technique_false_positive_rate": 0.1,
+                "expected_calibration_error": 0.1,
+            }
+            baseline_detection = {
+                "technique_thresholds": [0.3],
+                "techniques": {
+                    "vibrato": {
+                        "support": 10,
+                        "best_threshold": 0.3,
+                        "best_f1": 0.40,
+                        "best_precision": 0.50,
+                        "best_recall": 0.33,
+                        "best_false_positive_rate": 0.20,
+                        "average_precision": 0.45,
+                    }
+                },
+            }
+            candidate_detection = {
+                "technique_thresholds": [0.3],
+                "techniques": {
+                    "vibrato": {
+                        "support": 10,
+                        "best_threshold": 0.3,
+                        "best_f1": 0.55,
+                        "best_precision": 0.60,
+                        "best_recall": 0.50,
+                        "best_false_positive_rate": 0.25,
+                        "average_precision": 0.58,
+                    }
+                },
+            }
+            baseline_song = {
+                "technique_threshold": 0.3,
+                "macro_f1": 0.50,
+                "techniques": {"vibrato": {"support": 3, "precision": 0.5, "recall": 0.5, "f1": 0.5}},
+            }
+            candidate_song = {
+                "technique_threshold": 0.3,
+                "macro_f1": 0.70,
+                "techniques": {"vibrato": {"support": 3, "precision": 0.75, "recall": 0.75, "f1": 0.75}},
+            }
+            (baseline / "metrics.json").write_text(json.dumps(metrics), encoding="utf-8")
+            (candidate / "metrics.json").write_text(json.dumps(metrics), encoding="utf-8")
+            (baseline / "technique_detection.json").write_text(json.dumps(baseline_detection), encoding="utf-8")
+            (candidate / "technique_detection.json").write_text(json.dumps(candidate_detection), encoding="utf-8")
+            (baseline / "song_detection.json").write_text(json.dumps(baseline_song), encoding="utf-8")
+            (candidate / "song_detection.json").write_text(json.dumps(candidate_song), encoding="utf-8")
+
+            report = build_compare_report(
+                Namespace(
+                    baseline=str(baseline),
+                    candidate=[str(candidate)],
+                    min_top2=0.6,
+                    min_macro_f1=0.35,
+                    max_control_fpr=0.25,
+                    max_non_technique_fpr=0.25,
+                    max_ece=0.2,
+                )
+            )
+
+        candidate_report = report["candidates"][0]
+        vibrato = candidate_report["technique_detection"]["techniques"]["vibrato"]
+        self.assertAlmostEqual(vibrato["delta_vs_baseline"]["best_f1"], 0.15)
+        self.assertAlmostEqual(vibrato["delta_vs_baseline"]["best_false_positive_rate"], 0.05)
+        self.assertAlmostEqual(candidate_report["song_detection"]["macro_f1_delta_vs_baseline"], 0.20)
+
     def test_compare_runs_rejects_different_evaluation_manifests(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -3741,6 +3842,49 @@ class ManifestToolsTest(unittest.TestCase):
         self.assertEqual(sweep[0]["prediction_counts"]["unclear"], 2)
         self.assertEqual(sweep[0]["prediction_counts"]["not_enough_voice"], 1)
         self.assertEqual(sweep[0]["non_technique_false_positive_rate"], 2 / 3)
+
+    def test_evaluator_reports_per_technique_and_song_detection(self) -> None:
+        rows = [
+            {
+                "recording_id": "clip-1",
+                "song_id": "song-a",
+                "gold_family": "vibrato",
+                "gold_techniques": ["vibrato"],
+                "technique_scores": {"vibrato": 0.80, "breathy": 0.10},
+            },
+            {
+                "recording_id": "clip-2",
+                "song_id": "song-a",
+                "gold_family": "vibrato",
+                "gold_techniques": ["vibrato"],
+                "technique_scores": {"vibrato": 0.40, "breathy": 0.70},
+            },
+            {
+                "recording_id": "clip-3",
+                "song_id": "song-b",
+                "gold_family": "control",
+                "gold_techniques": [],
+                "technique_scores": {"vibrato": 0.20, "breathy": 0.65},
+            },
+        ]
+
+        technique_report = technique_detection_report(rows, [0.30, 0.60])
+        vibrato = technique_report["techniques"]["vibrato"]
+        breathy = technique_report["techniques"]["breathy"]
+
+        self.assertEqual(vibrato["support"], 2)
+        self.assertEqual(vibrato["best_threshold"], 0.30)
+        self.assertEqual(vibrato["best_f1"], 1.0)
+        self.assertEqual(breathy["support"], 0)
+        self.assertEqual(breathy["best_false_positive_rate"], 2 / 3)
+        self.assertEqual(len(technique_report["macro_by_threshold"]), 2)
+
+        song_report = song_detection_report(rows, technique_threshold=0.60)
+
+        self.assertEqual(song_report["technique_threshold"], 0.60)
+        self.assertEqual(len(song_report["songs"]), 2)
+        self.assertEqual(song_report["techniques"]["vibrato"]["true_positive"], 1)
+        self.assertEqual(song_report["techniques"]["breathy"]["false_positive"], 2)
 
     def test_evaluator_selects_operating_point_with_control_fpr_gate(self) -> None:
         sweep = [

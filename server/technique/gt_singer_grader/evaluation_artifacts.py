@@ -17,6 +17,13 @@ REQUIRED_EVALUATION_ARTIFACTS = (
     "calibration.csv",
 )
 
+OPTIONAL_EVALUATION_ARTIFACTS = (
+    "technique_detection.json",
+    "technique_detection.csv",
+    "song_detection.json",
+    "song_detection.csv",
+)
+
 
 def validate_eval_artifacts(candidate_eval_dir: str | Path) -> list[str]:
     root = Path(candidate_eval_dir)
@@ -35,6 +42,6 @@ def eval_artifact_hashes(candidate_eval_dir: str | Path) -> dict[str, str]:
     root = Path(candidate_eval_dir)
     return {
         name: sha256_file(root / name)
-        for name in REQUIRED_EVALUATION_ARTIFACTS
+        for name in (*REQUIRED_EVALUATION_ARTIFACTS, *OPTIONAL_EVALUATION_ARTIFACTS)
         if (root / name).is_file()
     }

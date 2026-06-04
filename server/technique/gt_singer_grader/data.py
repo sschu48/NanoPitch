@@ -383,7 +383,10 @@ class ManifestTechniqueDataset(Dataset):
     def __getitem__(self, index: int) -> dict[str, torch.Tensor | int | str]:
         record = self.records[index]
         family = manifest_family(record)
-        reason = trainability_reason(record)
+        if isinstance(record.get("labels"), dict):
+            reason = trainability_reason(record)
+        else:
+            reason = "trainable" if family in FAMILY_TO_INDEX else f"evaluation_only_family:{family}"
         if reason != "trainable" or family not in FAMILY_TO_INDEX:
             raise ValueError(f"record cannot be used as a training example yet: {reason}")
 

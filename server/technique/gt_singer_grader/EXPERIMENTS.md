@@ -154,6 +154,218 @@ and semantic release gates such as promotion eligibility, app-validation
 readiness, complete evaluator artifacts, and whether the packaged checkpoint
 still matches the checkpoint recorded by the candidate evaluation.
 
+## RoFormer Architecture Candidate: `gtsinger_band_roformer_v1`
+
+Purpose:
+
+- compare a small non-causal RoFormer-style technique classifier against the
+  locked Conv-GRU baseline without changing the app/API response contract
+- keep log-mel input and the existing output heads:
+  `vad_logits`, `technique_logits`, and `clip_logits`
+- produce comparable evaluation artifacts before deciding whether the
+  architecture is worth tuning or promoting
+
+Baseline lock:
+
+```bash
+cd server/technique
+
+python3 -m gt_singer_grader.verify_run \
+  --run-config ./gt_singer_grader/runs/gtsinger_song_aug_v1/run_config.json \
+  --strict
+
+python3 -m gt_singer_grader.evaluate \
+  --checkpoint ./gt_singer_grader/runs/gtsinger_song_aug_v1/checkpoints/best.pth \
+  --manifest ./gt_singer_grader/runs/gtsinger_song_aug_v1/val_manifest.jsonl \
+  --run-config ./gt_singer_grader/runs/gtsinger_song_aug_v1/run_config.json \
+  --output-dir ./gt_singer_grader/runs/gtsinger_song_aug_v1/eval_roformer_baseline_val \
+  --max-control-fpr 0.25 \
+  --max-non-technique-fpr 0.25
+```
+
+Smoke manifests:
+
+```bash
+cd server/technique
+
+python3 -m gt_singer_grader.sample_manifest \
+  --input ./gt_singer_grader/runs/gtsinger_song_aug_v1/train_manifest.jsonl \
+  --output ./gt_singer_grader/runs/gtsinger_band_roformer_v1_smoke_train.jsonl \
+  --summary-output ./gt_singer_grader/runs/gtsinger_band_roformer_v1_smoke_train_summary.json \
+  --max-records 32
+
+python3 -m gt_singer_grader.sample_manifest \
+  --input ./gt_singer_grader/runs/gtsinger_song_aug_v1/val_manifest.jsonl \
+  --output ./gt_singer_grader/runs/gtsinger_band_roformer_v1_smoke_val.jsonl \
+  --summary-output ./gt_singer_grader/runs/gtsinger_band_roformer_v1_smoke_val_summary.json \
+  --max-records 16
+```
+
+Smoke train:
+
+```bash
+cd server/technique
+
+python3 -m gt_singer_grader.train \
+  --architecture band_roformer \
+  --train-manifest ./gt_singer_grader/runs/gtsinger_band_roformer_v1_smoke_train.jsonl \
+  --val-manifest ./gt_singer_grader/runs/gtsinger_band_roformer_v1_smoke_val.jsonl \
+  --output-dir ./gt_singer_grader/runs/gtsinger_band_roformer_v1_smoke \
+  --n-mels 128 \
+  --max-seconds 10 \
+  --hidden-size 128 \
+  --roformer-layers 4 \
+  --roformer-heads 4 \
+  --roformer-ff-size 256 \
+  --epochs 2 \
+  --batch-size 4 \
+  --seed 1337 \
+  --quiet
+```
+
+Tiny overfit:
+
+```bash
+cd server/technique
+
+python3 -m gt_singer_grader.train \
+  --architecture band_roformer \
+  --train-manifest ./gt_singer_grader/runs/gtsinger_band_roformer_v1_smoke_train.jsonl \
+  --val-manifest ./gt_singer_grader/runs/gtsinger_band_roformer_v1_smoke_train.jsonl \
+  --output-dir ./gt_singer_grader/runs/gtsinger_band_roformer_v1_overfit \
+  --n-mels 128 \
+  --max-seconds 10 \
+  --hidden-size 128 \
+  --roformer-layers 4 \
+  --roformer-heads 4 \
+  --roformer-ff-size 256 \
+  --epochs 20 \
+  --batch-size 4 \
+  --seed 1337 \
+  --quiet
+```
+
+First comparable RoFormer run:
+
+```bash
+cd server/technique
+
+python3 -m gt_singer_grader.train \
+  --architecture band_roformer \
+  --train-manifest ./gt_singer_grader/runs/gtsinger_song_aug_v1/train_manifest.jsonl \
+  --val-manifest ./gt_singer_grader/runs/gtsinger_song_aug_v1/val_manifest.jsonl \
+  --output-dir ./gt_singer_grader/runs/gtsinger_band_roformer_v1 \
+  --n-mels 128 \
+  --max-seconds 10 \
+  --hidden-size 128 \
+  --roformer-layers 4 \
+  --roformer-heads 4 \
+  --roformer-ff-size 256 \
+  --epochs 50 \
+  --batch-size 8 \
+  --seed 1337 \
+  --quiet
+
+python3 -m gt_singer_grader.evaluate \
+  --checkpoint ./gt_singer_grader/runs/gtsinger_band_roformer_v1/checkpoints/best.pth \
+  --manifest ./gt_singer_grader/runs/gtsinger_song_aug_v1/val_manifest.jsonl \
+  --run-config ./gt_singer_grader/runs/gtsinger_band_roformer_v1/run_config.json \
+  --output-dir ./gt_singer_grader/runs/gtsinger_band_roformer_v1/eval_val \
+  --max-control-fpr 0.25 \
+  --max-non-technique-fpr 0.25
+
+python3 -m gt_singer_grader.compare_runs \
+  --baseline ./gt_singer_grader/runs/gtsinger_song_aug_v1/eval_roformer_baseline_val \
+  --candidate ./gt_singer_grader/runs/gtsinger_band_roformer_v1/eval_val \
+  --min-macro-f1-delta 0.03 \
+  --min-top2-delta 0.0 \
+  --max-control-fpr-delta 0.02 \
+  --max-non-technique-fpr-delta 0.0 \
+  --max-ece-delta 0.0 \
+  --output-json ./gt_singer_grader/runs/run_comparison_band_roformer_v1.json
+```
+
+Goal state:
+
+```text
+status: complete_not_promoted
+checkpoint: gt_singer_grader/runs/gtsinger_band_roformer_v1/checkpoints/best.pth
+best_epoch: 44
+train_evidence: smoke train passed; tiny overfit reached val_clip_acc=1.0000
+  and val_tech_macro_f1=0.6894 on the fixed 32-clip subset.
+metrics: top1=0.5239, top2=0.7021, clip_macro_f1=0.4613,
+  technique_macro_f1_at_0_30=0.4225, control_fpr=0.3220,
+  non_technique_fpr=0.3220, ece=0.4159
+baseline_delta: top1=-0.0319, top2=-0.0186, clip_macro_f1=-0.0101,
+  technique_macro_f1_at_0_30=+0.2042, control_fpr=+0.1130,
+  non_technique_fpr=+0.1130, ece=+0.2462
+comparison: gt_singer_grader/runs/run_comparison_band_roformer_v1.json
+promotion_gates: macro F1 delta >= +0.03, top-2 flat or better, control FPR
+  delta <= +0.02, non-technique FPR <= 0.25, calibration not worse, and
+  app-recording validation does not regress.
+notes: run/evaluation artifacts verify cleanly. The RoFormer candidate trains,
+  reloads, evaluates, and is comparable against the Conv-GRU baseline on the
+  locked validation split, but it is not promotion-eligible because it regresses
+  macro F1, top-2, false positives, and calibration. Do not package.
+failed_gates: clip_macro_f1_delta, control_false_positive_rate,
+  control_false_positive_rate_delta, expected_calibration_error,
+  expected_calibration_error_delta, non_technique_false_positive_rate,
+  non_technique_false_positive_rate_delta, top2_accuracy_delta
+```
+
+Second conservative RoFormer run:
+
+```bash
+cd server/technique
+
+python3 -m gt_singer_grader.train \
+  --architecture band_roformer \
+  --train-manifest ./gt_singer_grader/runs/gtsinger_song_aug_v1/train_manifest.jsonl \
+  --val-manifest ./gt_singer_grader/runs/gtsinger_song_aug_v1/val_manifest.jsonl \
+  --output-dir ./gt_singer_grader/runs/gtsinger_band_roformer_v2 \
+  --n-mels 128 \
+  --max-seconds 10 \
+  --hidden-size 96 \
+  --roformer-layers 3 \
+  --roformer-heads 4 \
+  --roformer-ff-size 192 \
+  --dropout 0.35 \
+  --weight-decay 0.0005 \
+  --lr 0.0001 \
+  --epochs 30 \
+  --batch-size 8 \
+  --seed 1337 \
+  --clip-loss-weight 1.2 \
+  --vad-loss-weight 0.3 \
+  --tech-loss-weight 0.45 \
+  --quiet
+```
+
+Result:
+
+```text
+status: complete_not_promoted
+checkpoint: gt_singer_grader/runs/gtsinger_band_roformer_v2/checkpoints/best.pth
+best_epoch: 21
+intent: reduce v1 overfiring with a smaller model, stronger regularization,
+  lower learning rate, and lower technique-loss weight.
+metrics: top1=0.5000, top2=0.6649, clip_macro_f1=0.4306,
+  technique_macro_f1_at_0_30=0.2230, song_detection_macro_f1=0.3184,
+  control_fpr=0.3559, non_technique_fpr=0.3559, ece=0.1318
+baseline_delta: top1=-0.0559, top2=-0.0559, clip_macro_f1=-0.0408,
+  technique_macro_f1_at_0_30=+0.0047, control_fpr=+0.1469,
+  non_technique_fpr=+0.1469, ece=-0.0379
+comparison: gt_singer_grader/runs/run_comparison_band_roformer_v2.json
+notes: run/evaluation artifacts verify cleanly. V2 improves calibration versus
+  both the Conv-GRU baseline and RoFormer v1, and its selected operating point
+  can pass the FPR gate by using a higher confidence threshold. It does not
+  improve overall accuracy: top-1, top-2, clip macro F1, raw false positives,
+  and v1's technique-detection gains all regress. Do not package.
+failed_gates: clip_macro_f1_delta, control_false_positive_rate,
+  control_false_positive_rate_delta, non_technique_false_positive_rate,
+  non_technique_false_positive_rate_delta, top2_accuracy_delta
+```
+
 ## Baseline Run: `gtsinger_song_aug_v1`
 
 Purpose:

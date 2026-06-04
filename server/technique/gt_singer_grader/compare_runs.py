@@ -114,6 +114,10 @@ def load_eval_dir(path: str) -> dict[str, Any]:
     threshold_sweep = read_json(root / "threshold_sweep.json") if (root / "threshold_sweep.json").exists() else {}
     operating_point = read_json(root / "operating_point.json") if (root / "operating_point.json").exists() else {}
     calibration = read_json(root / "calibration.json") if (root / "calibration.json").exists() else {}
+    technique_detection = (
+        read_json(root / "technique_detection.json") if (root / "technique_detection.json").exists() else {}
+    )
+    song_detection = read_json(root / "song_detection.json") if (root / "song_detection.json").exists() else {}
     evaluation_config = read_json(root / "evaluation_config.json")
     return {
         "path": str(root),
@@ -121,6 +125,8 @@ def load_eval_dir(path: str) -> dict[str, Any]:
         "threshold_sweep": threshold_sweep,
         "operating_point": operating_point,
         "calibration": calibration,
+        "technique_detection": technique_detection,
+        "song_detection": song_detection,
         "evaluation_config": evaluation_config,
         "evaluation_artifact_sha256": eval_artifact_hashes(root),
         "artifact_verification": {
@@ -297,11 +303,113 @@ def summarize_candidate(
         "path": candidate["path"],
         "metrics": {name: metric(candidate_metrics, name) for name in names},
         "operating_point": summarize_operating_point(candidate.get("operating_point") or candidate_metrics),
+        "technique_detection": summarize_technique_detection(
+            candidate.get("technique_detection") or {},
+            baseline.get("technique_detection") or {},
+        ),
+        "song_detection": summarize_song_detection(
+            candidate.get("song_detection") or {},
+            baseline.get("song_detection") or {},
+        ),
         "evaluation_artifact_sha256": candidate.get("evaluation_artifact_sha256") or {},
         "delta_vs_baseline": {name: delta(candidate_metrics, baseline_metrics, name) for name in names},
         "gates": candidate_gates,
         "regression_gates": candidate_delta_gates,
         "promotion": promotion_status(candidate_gates, candidate_delta_gates),
+    }
+
+
+def _optional_float(value: Any) -> float | None:
+    if not isinstance(value, (int, float)):
+        return None
+    numeric = float(value)
+    if not math.isfinite(numeric):
+        raise ValueError(f"metric must be finite: {value}")
+    return numeric
+
+
+def _delta_float(candidate: Any, baseline: Any) -> float | None:
+    candidate_value = _optional_float(candidate)
+    baseline_value = _optional_float(baseline)
+    if candidate_value is None or baseline_value is None:
+        return None
+    return candidate_value - baseline_value
+
+
+def summarize_technique_detection(candidate: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
+    candidate_techniques = candidate.get("techniques") if isinstance(candidate.get("techniques"), dict) else {}
+    baseline_techniques = baseline.get("techniques") if isinstance(baseline.get("techniques"), dict) else {}
+    if not candidate_techniques:
+        return {}
+
+    techniques: dict[str, Any] = {}
+    for name, candidate_row in sorted(candidate_techniques.items()):
+        if not isinstance(candidate_row, dict):
+            continue
+        baseline_row = baseline_techniques.get(name) if isinstance(baseline_techniques.get(name), dict) else {}
+        techniques[name] = {
+            "support": candidate_row.get("support"),
+            "best_threshold": candidate_row.get("best_threshold"),
+            "best_f1": _optional_float(candidate_row.get("best_f1")),
+            "best_precision": _optional_float(candidate_row.get("best_precision")),
+            "best_recall": _optional_float(candidate_row.get("best_recall")),
+            "best_false_positive_rate": _optional_float(candidate_row.get("best_false_positive_rate")),
+            "average_precision": _optional_float(candidate_row.get("average_precision")),
+            "delta_vs_baseline": {
+                "best_f1": _delta_float(candidate_row.get("best_f1"), baseline_row.get("best_f1")),
+                "best_precision": _delta_float(candidate_row.get("best_precision"), baseline_row.get("best_precision")),
+                "best_recall": _delta_float(candidate_row.get("best_recall"), baseline_row.get("best_recall")),
+                "best_false_positive_rate": _delta_float(
+                    candidate_row.get("best_false_positive_rate"),
+                    baseline_row.get("best_false_positive_rate"),
+                ),
+                "average_precision": _delta_float(
+                    candidate_row.get("average_precision"),
+                    baseline_row.get("average_precision"),
+                ),
+            },
+        }
+
+    return {
+        "available": True,
+        "technique_thresholds": candidate.get("technique_thresholds") or [],
+        "macro_by_threshold": candidate.get("macro_by_threshold") or [],
+        "techniques": techniques,
+    }
+
+
+def summarize_song_detection(candidate: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
+    if not candidate:
+        return {}
+    candidate_techniques = candidate.get("techniques") if isinstance(candidate.get("techniques"), dict) else {}
+    baseline_techniques = baseline.get("techniques") if isinstance(baseline.get("techniques"), dict) else {}
+    techniques: dict[str, Any] = {}
+    for name, candidate_row in sorted(candidate_techniques.items()):
+        if not isinstance(candidate_row, dict):
+            continue
+        baseline_row = baseline_techniques.get(name) if isinstance(baseline_techniques.get(name), dict) else {}
+        techniques[name] = {
+            "support": candidate_row.get("support"),
+            "precision": _optional_float(candidate_row.get("precision")),
+            "recall": _optional_float(candidate_row.get("recall")),
+            "f1": _optional_float(candidate_row.get("f1")),
+            "false_positive_rate": _optional_float(candidate_row.get("false_positive_rate")),
+            "delta_vs_baseline": {
+                "precision": _delta_float(candidate_row.get("precision"), baseline_row.get("precision")),
+                "recall": _delta_float(candidate_row.get("recall"), baseline_row.get("recall")),
+                "f1": _delta_float(candidate_row.get("f1"), baseline_row.get("f1")),
+                "false_positive_rate": _delta_float(
+                    candidate_row.get("false_positive_rate"),
+                    baseline_row.get("false_positive_rate"),
+                ),
+            },
+        }
+    return {
+        "available": True,
+        "technique_threshold": candidate.get("technique_threshold"),
+        "macro_f1": _optional_float(candidate.get("macro_f1")),
+        "macro_f1_delta_vs_baseline": _delta_float(candidate.get("macro_f1"), baseline.get("macro_f1")),
+        "techniques": techniques,
     }
 
 

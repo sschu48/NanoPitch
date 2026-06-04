@@ -10,7 +10,7 @@ import torch
 from .constants import DEFAULT_MAX_SECONDS, DEFAULT_N_MELS, FAMILY_NAMES, FRAME_HOP_SECONDS
 from .features import load_wav_mono, log_mel_spectrogram
 from .feedback import summarize_prediction, summary_to_json
-from .model import TechniqueGraderModel
+from .model import build_model_from_config
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,8 +37,8 @@ def choose_device(name: str) -> torch.device:
 class LoadedPredictor:
     checkpoint_path: str
     device: torch.device
-    model: TechniqueGraderModel
-    model_kwargs: dict[str, int | float]
+    model: torch.nn.Module
+    model_kwargs: dict[str, int | float | str]
     max_seconds: float
     checkpoint_epoch: int | None
     val_metrics: dict[str, float]
@@ -49,7 +49,8 @@ def load_predictor(checkpoint_path: str, device_name: str = "auto") -> LoadedPre
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
     model_kwargs = checkpoint.get("model_kwargs", {"n_mels": DEFAULT_N_MELS})
-    model = TechniqueGraderModel.from_config(model_kwargs)
+    model_kwargs.setdefault("architecture", "conv_gru")
+    model = build_model_from_config(model_kwargs)
     model.load_state_dict(checkpoint["model_state"])
     model.to(device)
     model.eval()

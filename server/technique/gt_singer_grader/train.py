@@ -41,6 +41,7 @@ from .constants import (
 from .data import (
     GTSingerTechniqueDataset,
     ManifestTechniqueDataset,
+    manifest_family,
     read_training_manifest,
     scan_gt_singer,
     split_records,
@@ -49,7 +50,7 @@ from .data import (
     write_manifest,
 )
 from .manifest import require_non_empty_records, trainability_reason, write_jsonl
-from .model import TechniqueGraderModel
+from .model import MODEL_ARCHITECTURES, build_model_from_config
 from .plan_training import plan_match_errors
 from .run_metadata import collect_run_metadata, file_metadata
 from .split_health import require_split_coverage, require_split_family_compatibility
@@ -69,7 +70,15 @@ def append_jsonl(path: str, payload: dict[str, object]) -> None:
 def require_trainable_manifest(records: list[dict[str, object]], *, source: str) -> None:
     bad_records: list[str] = []
     for index, record in enumerate(records, start=1):
-        reason = trainability_reason(record)
+        if isinstance(record.get("labels"), dict):
+            reason = trainability_reason(record)
+        else:
+            try:
+                family = manifest_family(record)
+            except ValueError:
+                reason = "missing_family"
+            else:
+                reason = "trainable" if family in FAMILY_NAMES else f"evaluation_only_family:{family}"
         if reason == "missing_family":
             bad_records.append(f"line {index}: manifest record has no family label")
             continue
@@ -139,9 +148,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--n-mels", type=int, default=DEFAULT_N_MELS)
     parser.add_argument("--max-seconds", type=float, default=DEFAULT_MAX_SECONDS)
+    parser.add_argument(
+        "--architecture",
+        choices=MODEL_ARCHITECTURES,
+        default="conv_gru",
+        help="Model architecture to train. Old checkpoints without this metadata load as conv_gru.",
+    )
     parser.add_argument("--conv-size", type=int, default=96)
     parser.add_argument("--hidden-size", type=int, default=128)
     parser.add_argument("--gru-layers", type=int, default=2)
+    parser.add_argument("--roformer-layers", type=int, default=4)
+    parser.add_argument("--roformer-heads", type=int, default=4)
+    parser.add_argument("--roformer-ff-size", type=int, default=256)
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--clip-loss-weight", type=float, default=1.0)
     parser.add_argument("--vad-loss-weight", type=float, default=0.3)
@@ -249,7 +267,7 @@ def technique_macro_f1(
 
 
 def run_epoch(
-    model: TechniqueGraderModel,
+    model: torch.nn.Module,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer | None,
     device: torch.device,
@@ -525,15 +543,28 @@ def main() -> None:
     if args.resume:
         resume_checkpoint = torch.load(args.resume, map_location="cpu")
 
-    model_kwargs = {
-        "n_mels": args.n_mels,
-        "conv_size": args.conv_size,
-        "hidden_size": args.hidden_size,
-        "gru_layers": args.gru_layers,
-        "dropout": args.dropout,
-    }
+    if args.architecture == "band_roformer":
+        model_kwargs = {
+            "architecture": args.architecture,
+            "n_mels": args.n_mels,
+            "hidden_size": args.hidden_size,
+            "roformer_layers": args.roformer_layers,
+            "roformer_heads": args.roformer_heads,
+            "roformer_ff_size": args.roformer_ff_size,
+            "dropout": args.dropout,
+        }
+    else:
+        model_kwargs = {
+            "architecture": args.architecture,
+            "n_mels": args.n_mels,
+            "conv_size": args.conv_size,
+            "hidden_size": args.hidden_size,
+            "gru_layers": args.gru_layers,
+            "dropout": args.dropout,
+        }
     if resume_checkpoint is not None:
         model_kwargs = resume_checkpoint.get("model_kwargs", model_kwargs)
+        model_kwargs.setdefault("architecture", "conv_gru")
 
     run_config = {
         "train_args": vars(args),
@@ -556,7 +587,7 @@ def main() -> None:
     write_json(os.path.join(output_dir, "run_config.json"), run_config)
     metrics_history_path = os.path.join(output_dir, "metrics_history.jsonl")
 
-    model = TechniqueGraderModel.from_config(model_kwargs).to(device)
+    model = build_model_from_config(model_kwargs).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=args.lr,
@@ -606,6 +637,7 @@ def main() -> None:
 
         checkpoint = {
             "epoch": epoch,
+            "architecture": model_kwargs.get("architecture", "conv_gru"),
             "model_state": model.state_dict(),
             "optimizer_state": optimizer.state_dict(),
             "scheduler_state": scheduler.state_dict(),
