@@ -422,6 +422,7 @@ function renderReport(report, options = {}) {
 
 function renderAxisCard(axis) {
   const tone = axis.available ? 'good' : 'warn';
+  const sections = axis.axis === 'technique' ? renderTechniqueSections(axis.sections || []) : '';
   const metrics = Object.entries(axis.metrics || {})
     .filter(([, value]) => value != null)
     .map(([key, value]) => {
@@ -444,8 +445,33 @@ function renderAxisCard(axis) {
       <h2>${axis.headline}</h2>
       <p>${axis.feedback || ''}</p>
       <div class="metric-list">${metrics || '<span class="muted">No metrics available.</span>'}</div>
+      ${sections}
     </article>
   `;
+}
+
+function renderTechniqueSections(sections) {
+  const confident = sections
+    .filter(section => section
+      && section.primary_technique
+      && section.primary_technique !== 'none'
+      && Number(section.primary_technique_score) >= 0.3
+      && Number(section.voiced_ratio) >= 0.15)
+    .slice(0, 6);
+  if (!confident.length) return '';
+  const rows = confident.map(section => {
+    const start = Number(section.start_s || 0).toFixed(1);
+    const end = Number(section.end_s || 0).toFixed(1);
+    const score = Math.round(Number(section.primary_technique_score || 0) * 100);
+    return `
+      <div class="section-row">
+        <span>${start}-${end}s</span>
+        <strong>${formatMetricLabel(section.primary_technique)}</strong>
+        <em>${score}%</em>
+      </div>
+    `;
+  }).join('');
+  return `<div class="section-list">${rows}</div>`;
 }
 
 function renderMetricBars(key, values) {

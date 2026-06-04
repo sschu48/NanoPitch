@@ -109,6 +109,12 @@ def build_axis_result(summary: dict[str, Any], assessment: dict[str, Any]) -> di
         for item in dominant_techniques
         if isinstance(item, dict) and item.get("technique")
     }
+    section_evidence = summary.get("section_technique_evidence") or []
+    section_score_map = {
+        str(item.get("technique")): float(item.get("max_score", 0.0))
+        for item in section_evidence
+        if isinstance(item, dict) and item.get("technique") and item.get("detected") is True
+    }
 
     metrics: dict[str, Any] = {
         "status": status or None,
@@ -119,6 +125,7 @@ def build_axis_result(summary: dict[str, Any], assessment: dict[str, Any]) -> di
         "voiced_percent": round(float(summary.get("voiced_ratio", 0.0)) * 100.0, 1),
         "family_margin": round(float(summary.get("family_margin", 0.0)), 3),
         "dominant_techniques": dominant_score_map or None,
+        "section_techniques": section_score_map or None,
         "technique_scores": summary.get("technique_scores", {}),
         "family_probabilities": summary.get("family_probabilities", {}),
     }
@@ -141,6 +148,8 @@ def build_axis_result(summary: dict[str, Any], assessment: dict[str, Any]) -> di
         "feedback": assessment.get("feedback") or "Technique probabilities are reported as model activity.",
         "metrics": metrics,
         "timeline": summary.get("technique_timeline", []),
+        "sections": summary.get("technique_sections", []),
+        "section_detection_config": summary.get("section_detection_config", {}),
     }
 
 

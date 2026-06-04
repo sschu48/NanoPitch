@@ -11,6 +11,10 @@ from .constants import DEFAULT_MAX_SECONDS, DEFAULT_N_MELS, FAMILY_NAMES, FRAME_
 from .features import load_wav_mono, log_mel_spectrogram
 from .feedback import summarize_prediction, summary_to_json
 from .model import TechniqueGraderModel
+from .section_detection import aggregate_section_evidence, section_windows
+
+SECTION_WINDOW_SECONDS = 5.0
+SECTION_STRIDE_SECONDS = 2.5
 
 
 def parse_args() -> argparse.Namespace:
@@ -92,6 +96,34 @@ def _chunk_mel(mel: torch.Tensor, max_frames: int) -> list[tuple[torch.Tensor, t
     return chunks
 
 
+def _run_mel_window(
+    predictor: LoadedPredictor,
+    mel: torch.Tensor,
+    *,
+    start: int,
+    end: int,
+    model_frames: int,
+) -> dict[str, torch.Tensor]:
+    window = mel[start:end]
+    valid_frames = window.size(0)
+    frame_mask = torch.ones(valid_frames, dtype=mel.dtype)
+    if valid_frames < model_frames:
+        pad_frames = model_frames - valid_frames
+        window = torch.nn.functional.pad(window, (0, 0, 0, pad_frames))
+        frame_mask = torch.nn.functional.pad(frame_mask, (0, pad_frames))
+    normalized_window = (window - window.mean()) / window.std().clamp_min(1e-5)
+    with torch.no_grad():
+        outputs = predictor.model(
+            normalized_window.unsqueeze(0).to(predictor.device),
+            frame_mask=frame_mask.unsqueeze(0).to(predictor.device),
+        )
+    return {
+        "vad_logits": outputs["vad_logits"].detach().cpu()[:, :valid_frames],
+        "technique_logits": outputs["technique_logits"].detach().cpu()[:, :valid_frames],
+        "clip_logits": outputs["clip_logits"].detach().cpu(),
+    }
+
+
 def predict_outputs(predictor: LoadedPredictor, audio_path: str) -> dict[str, torch.Tensor]:
     audio = load_wav_mono(audio_path)
     mel = log_mel_spectrogram(audio, n_mels=int(predictor.model_kwargs.get("n_mels", DEFAULT_N_MELS)))
@@ -120,6 +152,41 @@ def predict_outputs(predictor: LoadedPredictor, audio_path: str) -> dict[str, to
     }
 
 
+def predict_section_summaries(
+    predictor: LoadedPredictor,
+    audio_path: str,
+    *,
+    target_family: str | None = None,
+    window_seconds: float = SECTION_WINDOW_SECONDS,
+    stride_seconds: float = SECTION_STRIDE_SECONDS,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    audio = load_wav_mono(audio_path)
+    mel = log_mel_spectrogram(audio, n_mels=int(predictor.model_kwargs.get("n_mels", DEFAULT_N_MELS)))
+    model_frames = max(1, int(round(predictor.max_seconds / FRAME_HOP_SECONDS)))
+    window_frames = min(model_frames, max(1, int(round(window_seconds / FRAME_HOP_SECONDS))))
+    stride_frames = max(1, int(round(stride_seconds / FRAME_HOP_SECONDS)))
+
+    sections: list[dict[str, object]] = []
+    for start, end in section_windows(mel.size(0), window_frames, stride_frames):
+        outputs = _run_mel_window(predictor, mel, start=start, end=end, model_frames=model_frames)
+        summary = summarize_prediction(outputs, target_family=target_family)
+        sections.append(
+            {
+                "start_s": round(start * FRAME_HOP_SECONDS, 3),
+                "end_s": round(end * FRAME_HOP_SECONDS, 3),
+                "detected_family": summary.get("detected_family"),
+                "detected_confidence": summary.get("detected_confidence"),
+                "primary_technique": summary.get("primary_technique"),
+                "primary_technique_score": summary.get("primary_technique_score"),
+                "detection_status": summary.get("detection_status"),
+                "voiced_ratio": summary.get("voiced_ratio"),
+                "technique_scores": summary.get("technique_scores"),
+            }
+        )
+
+    return sections, aggregate_section_evidence(sections)
+
+
 def predict_summary(
     predictor: LoadedPredictor,
     audio_path: str,
@@ -127,7 +194,16 @@ def predict_summary(
     target_family: str | None = None,
 ) -> dict[str, object]:
     outputs = predict_outputs(predictor, audio_path)
-    return summarize_prediction(outputs, target_family=target_family)
+    summary = summarize_prediction(outputs, target_family=target_family)
+    sections, aggregate = predict_section_summaries(predictor, audio_path, target_family=target_family)
+    summary["technique_sections"] = sections
+    summary["section_technique_evidence"] = aggregate
+    summary["section_detection_config"] = {
+        "window_seconds": SECTION_WINDOW_SECONDS,
+        "stride_seconds": SECTION_STRIDE_SECONDS,
+        "model_context_seconds": predictor.max_seconds,
+    }
+    return summary
 
 
 def main() -> None:

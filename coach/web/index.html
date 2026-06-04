@@ -339,6 +339,40 @@
       background: var(--teal);
     }
 
+    .section-list {
+      display: grid;
+      gap: 6px;
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid var(--line);
+    }
+
+    .section-row {
+      display: grid;
+      grid-template-columns: 68px minmax(0, 1fr) 42px;
+      align-items: center;
+      gap: 8px;
+      min-height: 26px;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    .section-row strong {
+      min-width: 0;
+      overflow: hidden;
+      color: var(--ink);
+      font-weight: 700;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .section-row em {
+      color: var(--ink);
+      font-style: normal;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+
     .empty-report {
       padding: 26px 14px;
       color: var(--muted);

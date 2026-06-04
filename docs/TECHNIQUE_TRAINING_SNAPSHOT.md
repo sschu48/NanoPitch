@@ -55,16 +55,50 @@ was better calibrated, but it lost too much accuracy.
 - no generated `runs/`, `data/`, or local manifest directories are committed
 - the browser app and local technique API continue to load the current submitted
   model
+- technique inference now also runs the same packaged model over overlapping
+  5-second sections with a 2.5-second stride, then aggregates repeated
+  section-level evidence
 
 The deeper RoFormer experiment code and run notes live on the
 `technique-roformer-gameplan` branch. That branch is useful for comparing model
 families and reproducing the rejected experiments, but it is not required for
 the submitted app to run.
 
+## Section-Level Detection Layer
+
+The submitted checkpoint was trained with a 10-second model context. Instead of
+changing that checkpoint or increasing the runtime context out of distribution,
+the API keeps the same model and adds a detection layer around it:
+
+```text
+recording WAV
+  -> 5s overlapping sections, stride 2.5s
+  -> current packaged technique model
+  -> per-section technique evidence
+  -> aggregate techniques that repeat in adjacent sections
+```
+
+This better matches the product task. Singing technique is often local:
+vibrato may appear near note endings, glissando may appear during one
+transition, and breathiness may be phrase-specific. A single whole-recording
+label can hide those events, especially when the singer changes technique during
+the take.
+
+The section layer is deliberately conservative:
+
+- it does not change or retrain `technique_demo_best.pth`
+- it preserves the existing whole-take summary fields
+- it reports section-level evidence separately in the API response
+- it requires repeated adjacent-section evidence for multi-section recordings
+  before listing a technique as detected across the take
+
 ## Takeaway
 
 The strongest evidence from these experiments is not that the technique model is
 finished. It is that we tested a stronger architecture, measured the tradeoffs,
 and chose not to ship it because it made the user-facing behavior less reliable.
-The best next step is to collect and review app-style recordings, then validate
-any future checkpoint against that target-domain set before packaging it.
+For the submitted model, section-level detection is the safer improvement path:
+it improves how we interpret the current checkpoint without changing which model
+the app runs. The best next step is to collect and review app-style recordings,
+then validate any future checkpoint against that target-domain set before
+packaging it.

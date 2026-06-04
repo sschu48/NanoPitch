@@ -361,6 +361,8 @@
         technique_scores: summary.technique_scores || null,
       },
       timeline: summary.technique_timeline || [],
+      sections: summary.technique_sections || [],
+      section_detection_config: summary.section_detection_config || null,
     };
   }
 

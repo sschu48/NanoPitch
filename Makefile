@@ -68,6 +68,7 @@ technique-check-light:
 		server/technique/gt_singer_grader/prepare_app_recordings.py \
 		server/technique/gt_singer_grader/run_metadata.py \
 		server/technique/gt_singer_grader/sample_manifest.py \
+		server/technique/gt_singer_grader/section_detection.py \
 		server/technique/gt_singer_grader/split_health.py \
 		server/technique/gt_singer_grader/split_manifest.py \
 		server/technique/gt_singer_grader/train.py \
