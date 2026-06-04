@@ -168,6 +168,12 @@ What we added instead:
 - dataset strategy for VocalSet, DAMP-style recordings, and future app data
 - packaging and verification tooling for future improved checkpoints
 
+We also kept a docs-only snapshot of the technique training attempts and model
+comparison results in
+[docs/TECHNIQUE_TRAINING_SNAPSHOT.md](docs/TECHNIQUE_TRAINING_SNAPSHOT.md).
+That snapshot explains why experimental RoFormer checkpoints were not promoted
+and confirms that `main` keeps the submitted packaged model unchanged.
+
 So the submitted technique model should be treated as a working demo-grade
 fourth axis, not a production vocal-technique judge.
 
