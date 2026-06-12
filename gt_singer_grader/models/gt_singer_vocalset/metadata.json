@@ -1,0 +1,38 @@
+{
+  "source_checkpoint": "c:\\MUSIC_AI_CLASS\\NanoPitch\\gt_singer_grader\\runs\\exp2_detail\\checkpoints\\epoch_100.pth",
+  "packaged_checkpoint": "c:\\MUSIC_AI_CLASS\\NanoPitch\\gt_singer_grader\\models\\technique_demo_best.pth",
+  "packaged_epoch": 100,
+  "selection_note": "Latest completed exp2_detail checkpoint trained on GT Singer English data.",
+  "val_metrics": {
+    "loss": 2.498747411656053,
+    "clip_loss": 2.269911821676444,
+    "vad_loss": 0.13876189291477203,
+    "tech_loss": 0.2674386742180341,
+    "clip_acc": 0.6301369667053223,
+    "tech_macro_f1": 0.4981670733531554
+  },
+  "train_args": {
+    "dataset_root": "./gt_singer_grader/data/GTSinger",
+    "language": "English",
+    "output_dir": "./gt_singer_grader/runs/exp2_detail",
+    "resume": null,
+    "device": "cuda",
+    "epochs": 100,
+    "batch_size": 4,
+    "lr": 0.0002,
+    "weight_decay": 0.0002,
+    "num_workers": 0,
+    "seed": 1337,
+    "val_ratio": 0.1,
+    "n_mels": 80,
+    "max_seconds": 10.0,
+    "conv_size": 128,
+    "hidden_size": 192,
+    "gru_layers": 3,
+    "dropout": 0.3,
+    "clip_loss_weight": 1.0,
+    "vad_loss_weight": 0.3,
+    "tech_loss_weight": 0.7,
+    "include_speech": false
+  }
+}
